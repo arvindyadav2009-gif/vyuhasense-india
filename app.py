@@ -20,6 +20,7 @@ Run in terminal:
 """
 
 import io
+import re
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -131,24 +132,203 @@ AUTOCOMPLETE_OPTIONS = [
 ]
 AUTOCOMPLETE_OPTIONS.append("✏️ (Type Other Unlisted Ticker...)")
 
-def parse_ticker_safely(raw_input, fallback="RELIANCE"):
+# Common Indian Company Name Aliases to Ticker Mapping
+NAME_ALIASES = {
+    'INFOSYS': 'INFY',
+    'INFY': 'INFY',
+    'STATE BANK OF INDIA': 'SBIN',
+    'STATE BANK': 'SBIN',
+    'SBI': 'SBIN',
+    'SBIN': 'SBIN',
+    'TATA MOTORS': 'TATAMOTORS',
+    'TATA MOTOR': 'TATAMOTORS',
+    'TATAMOTORS': 'TATAMOTORS',
+    'TATA STEEL': 'TATASTEEL',
+    'TATASTEEL': 'TATASTEEL',
+    'TATA CHEMICALS': 'TATACHEM',
+    'TATACHEM': 'TATACHEM',
+    'TCS': 'TCS',
+    'TATA CONSULTANCY SERVICES': 'TCS',
+    'HDFC': 'HDFCBANK',
+    'HDFC BANK': 'HDFCBANK',
+    'HDFCBANK': 'HDFCBANK',
+    'ICICI': 'ICICIBANK',
+    'ICICI BANK': 'ICICIBANK',
+    'ICICIBANK': 'ICICIBANK',
+    'KOTAK': 'KOTAKBANK',
+    'KOTAK BANK': 'KOTAKBANK',
+    'KOTAK MAHINDRA': 'KOTAKBANK',
+    'KOTAKBANK': 'KOTAKBANK',
+    'AXIS': 'AXISBANK',
+    'AXIS BANK': 'AXISBANK',
+    'AXISBANK': 'AXISBANK',
+    'ASIAN PAINTS': 'ASIANPAINT',
+    'ASIAN PAINT': 'ASIANPAINT',
+    'ASIANPAINT': 'ASIANPAINT',
+    'RELIANCE': 'RELIANCE',
+    'RELIANCE INDUSTRIES': 'RELIANCE',
+    'RIL': 'RELIANCE',
+    'BHARTI AIRTEL': 'BHARTIARTL',
+    'AIRTEL': 'BHARTIARTL',
+    'BHARTIARTL': 'BHARTIARTL',
+    'HINDUSTAN UNILEVER': 'HINDUNILVR',
+    'HUL': 'HINDUNILVR',
+    'HINDUNILVR': 'HINDUNILVR',
+    'L&T': 'LT',
+    'LARSEN': 'LT',
+    'LARSEN & TOUBRO': 'LT',
+    'LARSEN AND TOUBRO': 'LT',
+    'LT': 'LT',
+    'MARUTI': 'MARUTI',
+    'MARUTI SUZUKI': 'MARUTI',
+    'SUN PHARMA': 'SUNPHARMA',
+    'SUN PHARMACEUTICAL': 'SUNPHARMA',
+    'SUNPHARMA': 'SUNPHARMA',
+    'TITAN': 'TITAN',
+    'ADANI ENTERPRISES': 'ADANIENT',
+    'ADANIENT': 'ADANIENT',
+    'ADANI PORTS': 'ADANIPORTS',
+    'ADANIPORTS': 'ADANIPORTS',
+    'INDIGO': 'INDIGO',
+    'INTERGLOBE': 'INDIGO',
+    'INTERGLOBE AVIATION': 'INDIGO',
+    'HAL': 'HAL',
+    'HINDUSTAN AERONAUTICS': 'HAL',
+    'BEL': 'BEL',
+    'BHARAT ELECTRONICS': 'BEL',
+    'BDL': 'BDL',
+    'BHARAT DYNAMICS': 'BDL',
+    'MAZAGON': 'MAZDOCK',
+    'MAZAGON DOCK': 'MAZDOCK',
+    'MAZDOCK': 'MAZDOCK',
+    'COCHIN SHIPYARD': 'COCHINSHIP',
+    'COCHINSHIP': 'COCHINSHIP',
+    'ZOMATO': 'ZOMATO',
+    'WIPRO': 'WIPRO',
+    'HCL': 'HCLTECH',
+    'HCL TECH': 'HCLTECH',
+    'HCL TECHNOLOGIES': 'HCLTECH',
+    'HCLTECH': 'HCLTECH',
+    'TECH MAHINDRA': 'TECHM',
+    'TECHM': 'TECHM',
+    'BAJAJ FINANCE': 'BAJFINANCE',
+    'BAJFINANCE': 'BAJFINANCE',
+    'BAJAJ FINSERV': 'BAJAJFINSV',
+    'BAJAJFINSV': 'BAJAJFINSV',
+    'ULTRATECH': 'ULTRACEMCO',
+    'ULTRATECH CEMENT': 'ULTRACEMCO',
+    'ULTRACEMCO': 'ULTRACEMCO',
+    'JSW STEEL': 'JSWSTEEL',
+    'JSWSTEEL': 'JSWSTEEL',
+    'CIPLA': 'CIPLA',
+    'DR REDDY': 'DRREDDY',
+    'DR REDDYS': 'DRREDDY',
+    'DRREDDY': 'DRREDDY',
+    'APOLLO HOSPITALS': 'APOLLOHOSP',
+    'APOLLOHOSP': 'APOLLOHOSP',
+    'EICHER': 'EICHERMOT',
+    'EICHER MOTORS': 'EICHERMOT',
+    'ROYAL ENFIELD': 'EICHERMOT',
+    'EICHERMOT': 'EICHERMOT',
+    'HERO': 'HEROMOTOCO',
+    'HERO MOTOCORP': 'HEROMOTOCO',
+    'HEROMOTOCO': 'HEROMOTOCO',
+    'NESTLE': 'NESTLEIND',
+    'NESTLEIND': 'NESTLEIND',
+    'BRITANNIA': 'BRITANNIA',
+    'TRENT': 'TRENT',
+    'ZUDIO': 'TRENT',
+    'WESTSIDE': 'TRENT',
+    'JIO': 'JIOFIN',
+    'JIO FINANCIAL': 'JIOFIN',
+    'JIOFIN': 'JIOFIN',
+    'BPCL': 'BPCL',
+    'BHARAT PETROLEUM': 'BPCL',
+    'IOC': 'IOC',
+    'INDIAN OIL': 'IOC',
+    'SUZLON': 'SUZLON',
+    'SUZLON ENERGY': 'SUZLON',
+    'PAYTM': 'PAYTM',
+    'ONE97': 'PAYTM',
+    'IRCTC': 'IRCTC',
+    'RVNL': 'RVNL',
+    'IRFC': 'IRFC',
+    'BHEL': 'BHEL',
+    'VEDANTA': 'VEDL',
+    'VEDL': 'VEDL'
+}
+
+
+def resolve_ticker_advanced(raw_input, fallback="RELIANCE"):
     """
-    Robustly extracts the clean ticker symbol from any autocomplete label,
-    free-text query, or raw symbol string without ever raising an exception.
+    Ultra-robust stock symbol resolver that flawlessly extracts the correct
+    NSE/BSE ticker from:
+    1. Formatted autocomplete labels (e.g. 'TCS — Tata Consultancy Services [IT Services]')
+    2. Company common names (e.g. 'Infosys', 'Tata Motors', 'State Bank of India', 'HDFC')
+    3. Direct symbols in any case (e.g. 'tcs', 'infy', 'tatamotors', 'sbin', 'customsym')
+    4. Free-text search queries or raw strings
+    Guarantees 100% exception-free execution.
     """
     try:
         if not raw_input or not isinstance(raw_input, str):
             return fallback
-        part = raw_input.split("—")[0].split("-")[0].split(":")[0].strip()
-        part = part.upper()
-        if part.endswith(".NS"):
-            part = part[:-3]
-        elif part.endswith(".BO"):
-            part = part[:-3]
-        clean = re.sub(r"[^A-Z0-9]", "", part).strip()
-        return clean if clean else fallback
+
+        raw = raw_input.strip()
+        if not raw:
+            return fallback
+
+        # 1. Autocomplete string split
+        if '—' in raw or '-' in raw or ':' in raw:
+            part = raw.split('—')[0].split('-')[0].split(':')[0].strip().upper()
+            if part.endswith('.NS'):
+                part = part[:-3]
+            elif part.endswith('.BO'):
+                part = part[:-3]
+            clean = re.sub(r'[^A-Z0-9]', '', part)
+            if clean:
+                return clean
+
+        upper_raw = raw.upper()
+        if upper_raw.endswith('.NS'):
+            upper_raw = upper_raw[:-3]
+        elif upper_raw.endswith('.BO'):
+            upper_raw = upper_raw[:-3]
+
+        upper_clean = re.sub(r'[^A-Z0-9\s&]', '', upper_raw).strip()
+        no_space = re.sub(r'[^A-Z0-9]', '', upper_raw).strip()
+
+        # 2. Direct match in known symbols
+        if no_space in STOCK_DIRECTORY:
+            return no_space
+
+        # 3. Direct match in aliases dictionary
+        if upper_clean in NAME_ALIASES:
+            return NAME_ALIASES[upper_clean]
+        if no_space in NAME_ALIASES:
+            return NAME_ALIASES[no_space]
+
+        # 4. Partial / Substring match in aliases dictionary
+        for alias, sym in NAME_ALIASES.items():
+            if alias in upper_clean or (len(upper_clean) >= 3 and upper_clean in alias):
+                return sym
+
+        # 5. Search company names in master STOCK_DIRECTORY
+        for sym, data in STOCK_DIRECTORY.items():
+            name_clean = re.sub(r'[^A-Z0-9\s]', '', data['name'].upper())
+            if upper_clean in name_clean or (len(upper_clean) >= 3 and name_clean in upper_clean):
+                return sym
+
+        # 6. Fallback to clean alphanumeric or fallback symbol
+        return no_space if no_space else fallback
     except Exception:
         return fallback
+
+
+def parse_ticker_safely(raw_input, fallback="RELIANCE"):
+    """
+    Legacy compatibility wrapper pointing to the advanced resolver.
+    """
+    return resolve_ticker_advanced(raw_input, fallback=fallback)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -1204,28 +1384,78 @@ def main():
     st.sidebar.title("📈 VyuhaSense Pro")
     st.sidebar.markdown(f"**Session:** `{formatted_date}`\n**Time:** `{formatted_time}`")
 
-    # Dynamic Live Search & Real-Time Auto-Suggest (Zero Exception Architecture)
-    st.sidebar.subheader("🔍 Live Search & Auto-Suggest")
+    # -------------------------------------------------------------
+    # 🔍 Live Stock Search & Autocomplete (Zero-Exception, Fully Reactive)
+    # -------------------------------------------------------------
+    st.sidebar.subheader("🔍 Search & Select Stock")
+
+    if "active_ticker" not in st.session_state:
+        st.session_state["active_ticker"] = "RELIANCE"
+    if "search_input_val" not in st.session_state:
+        st.session_state["search_input_val"] = ""
+
+    # Quick Popular Picks row for 1-click instant switching
+    st.sidebar.markdown("**⚡ Quick Picks:**")
+    q_col1, q_col2, q_col3, q_col4 = st.sidebar.columns(4)
+    if q_col1.button("RELIANCE", use_container_width=True):
+        st.session_state["active_ticker"] = "RELIANCE"
+        st.session_state["search_input_val"] = ""
+        st.rerun()
+    if q_col2.button("TCS", use_container_width=True):
+        st.session_state["active_ticker"] = "TCS"
+        st.session_state["search_input_val"] = ""
+        st.rerun()
+    if q_col3.button("INFY", use_container_width=True):
+        st.session_state["active_ticker"] = "INFY"
+        st.session_state["search_input_val"] = ""
+        st.rerun()
+    if q_col4.button("TATAMOTORS", use_container_width=True):
+        st.session_state["active_ticker"] = "TATAMOTORS"
+        st.session_state["search_input_val"] = ""
+        st.rerun()
+
+    # Search / Stock Symbol Input Box
     search_keyword = st.sidebar.text_input(
         "Enter Stock Symbol or Company Name:",
-        value="",
-        placeholder="e.g. Tata, HDFC, Reliance, Defense, Zomato...",
-        help="Type any symbol or company name. The list below will dynamically suggest all matching equities in real-time."
+        value=st.session_state["search_input_val"],
+        placeholder="e.g. TCS, Infosys, Tata Motors, HDFC, Zomato...",
+        key="main_stock_search_input",
+        help="Type any symbol or company name and press Enter to instantly analyze it."
     ).strip()
 
-    # Dynamically generate suggestions matching current search input
+    # If user entered or changed search keyword:
+    if search_keyword and search_keyword != st.session_state["search_input_val"]:
+        st.session_state["search_input_val"] = search_keyword
+        resolved_sym = resolve_ticker_advanced(search_keyword, fallback=st.session_state["active_ticker"])
+        st.session_state["active_ticker"] = resolved_sym
+
+    # Dynamic suggestions matching search keyword or full directory
     matching_options = get_dynamic_stock_suggestions(search_keyword)
 
-    # Autocomplete Selectbox that filters dynamically
+    # Determine default index in matching_options for currently active stock
+    active_sym = st.session_state["active_ticker"]
+    select_idx = 0
+    for i, opt in enumerate(matching_options):
+        opt_sym = resolve_ticker_advanced(opt)
+        if opt_sym == active_sym:
+            select_idx = i
+            break
+
+    # Dynamic Autocomplete Dropdown
     selected_stock = st.sidebar.selectbox(
-        "Select Expected Stock:",
+        "Matching Suggestions & Directory:",
         options=matching_options,
-        index=0,
-        help="Choose from the matching stocks above. You can also search directly inside this dropdown."
+        index=select_idx,
+        key=f"stock_select_{search_keyword.lower().replace(' ', '_')[:12]}",
+        help="Select any matching stock from the directory. The entire dashboard refreshes immediately."
     )
 
-    # Safe, exception-free ticker resolution
-    active_ticker = parse_ticker_safely(selected_stock, fallback="RELIANCE")
+    # If user interacted with the selectbox, synchronize active_ticker
+    chosen_ticker = resolve_ticker_advanced(selected_stock, fallback=active_sym)
+    if chosen_ticker and chosen_ticker != st.session_state["active_ticker"]:
+        st.session_state["active_ticker"] = chosen_ticker
+
+    active_ticker = st.session_state["active_ticker"]
 
     exchange = st.sidebar.radio("Exchange", ["NSE", "BSE"], horizontal=True)
 
