@@ -26,7 +26,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import requests
-from datetime import datetime
+
+from datetime import datetime, timedelta, timezone
+# Explicit Indian Standard Time (IST = UTC + 5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # Optional advanced visualization libraries with graceful fallback
 try:
@@ -913,7 +916,7 @@ def generate_trade_verdict(current_price, current_sma, current_rsi, macd_hist, b
 # -------------------------------------------------------------
 def main():
     # Live Date & Time Tracker (Current Local Session)
-    current_dt = datetime.now()
+    current_dt = datetime.now(IST)
     formatted_date = current_dt.strftime("%A, %d %B %Y")
     formatted_time = current_dt.strftime("%I:%M:%S %p IST")
 
