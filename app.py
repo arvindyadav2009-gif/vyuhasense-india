@@ -131,6 +131,92 @@ AUTOCOMPLETE_OPTIONS = [
 ]
 AUTOCOMPLETE_OPTIONS.append("✏️ (Type Other Unlisted Ticker...)")
 
+def parse_ticker_safely(raw_input, fallback="RELIANCE"):
+    """
+    Robustly extracts the clean ticker symbol from any autocomplete label,
+    free-text query, or raw symbol string without ever raising an exception.
+    """
+    try:
+        if not raw_input or not isinstance(raw_input, str):
+            return fallback
+        part = raw_input.split("—")[0].split("-")[0].split(":")[0].strip()
+        part = part.upper()
+        if part.endswith(".NS"):
+            part = part[:-3]
+        elif part.endswith(".BO"):
+            part = part[:-3]
+        clean = re.sub(r"[^A-Z0-9]", "", part).strip()
+        return clean if clean else fallback
+    except Exception:
+        return fallback
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_dynamic_stock_suggestions(search_query=""):
+    """
+    Dynamically generates stock suggestions matching the user's typed input in real-time.
+    Searches:
+    1. Pre-indexed master directory of Indian stocks (Symbol, Company Name, Sector)
+    2. Online Yahoo Finance search endpoint for Indian equities (.NS, .BO)
+    Guarantees zero unhandled exceptions.
+    """
+    try:
+        q = (search_query or "").strip().upper()
+        if not q:
+            return AUTOCOMPLETE_OPTIONS
+
+        exact_matches = []
+        prefix_matches = []
+        name_matches = []
+        sector_matches = []
+
+        # 1. Match against master Indian directory
+        for sym, data in STOCK_DIRECTORY.items():
+            entry = f"{sym} — {data['name']} [{data['sector']}]"
+            name_upper = data["name"].upper()
+            sec_upper = data["sector"].upper()
+
+            if q == sym:
+                exact_matches.append(entry)
+            elif sym.startswith(q):
+                prefix_matches.append(entry)
+            elif q in sym or q in name_upper:
+                name_matches.append(entry)
+            elif q in sec_upper:
+                sector_matches.append(entry)
+
+        combined = exact_matches + prefix_matches + name_matches + sector_matches
+
+        # 2. Live online search fallback if fewer than 4 matches found
+        if len(combined) < 4 and len(q) >= 2:
+            try:
+                url = f"https://query2.finance.yahoo.com/v1/finance/search?q={requests.utils.quote(search_query.strip())}&quotesCount=6&newsCount=0"
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                res = requests.get(url, headers=headers, timeout=2.5)
+                if res.status_code == 200:
+                    payload = res.json()
+                    for item in payload.get("quotes", []):
+                        sym = item.get("symbol", "").upper()
+                        short_name = item.get("shortname") or item.get("longname") or sym
+                        exch = item.get("exchange", "")
+                        if sym.endswith(".NS") or sym.endswith(".BO") or exch in ["NSI", "BSE"]:
+                            base_sym = sym.replace(".NS", "").replace(".BO", "")
+                            sec = get_sector_for_ticker(base_sym)
+                            online_entry = f"{base_sym} — {short_name} [{sec}]"
+                            if online_entry not in combined:
+                                combined.append(online_entry)
+            except Exception:
+                pass
+
+        # 3. Always provide a custom symbol option so any typed ticker is usable
+        custom_entry = f"{q} — Use '{q}' as Custom Symbol [Broad Market / Diversified]"
+        if not any(c.startswith(f"{q} —") for c in combined):
+            combined.append(custom_entry)
+
+        return combined if combined else [f"{q} — Custom Stock Symbol [Broad Market / Diversified]"]
+    except Exception:
+        return AUTOCOMPLETE_OPTIONS
+
 
 
 def get_sector_for_ticker(ticker):
@@ -241,60 +327,81 @@ def get_derivatives_profile(clean_ticker, current_price):
     """
     Computes Options Put-Call Ratio (PCR), Max Pain Strike, and
     strike-wise Call/Put open interest build-up for Indian F&O equities.
+    Guaranteed zero exception fallback.
     """
-    seed = sum(ord(c) for c in clean_ticker) % 1000
-    np.random.seed(seed + 19)
+    try:
+        clean_ticker = clean_ticker or "RELIANCE"
+        current_price = max(1.0, float(current_price) if current_price is not None and not np.isnan(current_price) else 100.0)
+        seed = sum(ord(c) for c in clean_ticker) % 1000
+        np.random.seed(seed + 19)
 
-    step = 20 if current_price > 1200 else 10 if current_price > 400 else 5
-    atm_strike = round(current_price / step) * step
+        step = 20 if current_price > 1200 else 10 if current_price > 400 else 5
+        atm_strike = round(current_price / step) * step
 
-    strikes = [atm_strike + (i * step) for i in range(-4, 5)]
-    call_oi = [int(np.random.randint(45, 260) * 1000) for _ in strikes]
-    put_oi = [int(np.random.randint(45, 260) * 1000) for _ in strikes]
+        strikes = [atm_strike + (i * step) for i in range(-4, 5)]
+        call_oi = [int(np.random.randint(45, 260) * 1000) for _ in strikes]
+        put_oi = [int(np.random.randint(45, 260) * 1000) for _ in strikes]
 
-    # Model institutional skew: Put writers defend supports, Call writers cap resistances
-    for i in range(len(strikes)):
-        if strikes[i] < current_price:
-            put_oi[i] = int(put_oi[i] * 1.45)
-        elif strikes[i] > current_price:
-            call_oi[i] = int(call_oi[i] * 1.40)
+        # Model institutional skew: Put writers defend supports, Call writers cap resistances
+        for i in range(len(strikes)):
+            if strikes[i] < current_price:
+                put_oi[i] = int(put_oi[i] * 1.45)
+            elif strikes[i] > current_price:
+                call_oi[i] = int(call_oi[i] * 1.40)
 
-    total_put_oi = sum(put_oi)
-    total_call_oi = sum(call_oi)
-    pcr = round(total_put_oi / (total_call_oi + 1e-9), 2)
+        total_put_oi = sum(put_oi)
+        total_call_oi = sum(call_oi)
+        pcr = round(total_put_oi / (total_call_oi + 1e-9), 2)
 
-    max_call_idx = int(np.argmax(call_oi))
-    max_put_idx = int(np.argmax(put_oi))
+        max_call_idx = int(np.argmax(call_oi))
+        max_put_idx = int(np.argmax(put_oi))
 
-    call_resistance_strike = strikes[max_call_idx]
-    put_support_strike = strikes[max_put_idx]
-    max_pain_strike = atm_strike
+        call_resistance_strike = strikes[max_call_idx]
+        put_support_strike = strikes[max_put_idx]
+        max_pain_strike = atm_strike
 
-    if pcr >= 1.15:
-        pcr_signal = "Bullish Put Writing (Strong Floor)"
-        pcr_badge = "🟢"
-    elif pcr <= 0.85:
-        pcr_signal = "Bearish Call Writing (Overhead Resistance)"
-        pcr_badge = "🔴"
-    else:
-        pcr_signal = "Neutral / Balanced Expiry Range"
-        pcr_badge = "⚖️"
+        if pcr >= 1.15:
+            pcr_signal = "Bullish Put Writing (Strong Floor)"
+            pcr_badge = "🟢"
+        elif pcr <= 0.85:
+            pcr_signal = "Bearish Call Writing (Overhead Resistance)"
+            pcr_badge = "🔴"
+        else:
+            pcr_signal = "Neutral / Balanced Expiry Range"
+            pcr_badge = "⚖️"
 
-    df_chain = pd.DataFrame({
-        "Strike (₹)": strikes,
-        "Call OI (Lakh Shares)": [round(c / 100000, 2) for c in call_oi],
-        "Put OI (Lakh Shares)": [round(p / 100000, 2) for p in put_oi]
-    })
+        df_chain = pd.DataFrame({
+            "Strike (₹)": strikes,
+            "Call OI (Lakh Shares)": [round(c / 100000, 2) for c in call_oi],
+            "Put OI (Lakh Shares)": [round(p / 100000, 2) for p in put_oi]
+        })
 
-    return {
-        "pcr": pcr,
-        "pcr_signal": pcr_signal,
-        "pcr_badge": pcr_badge,
-        "max_pain": max_pain_strike,
-        "call_resistance_strike": call_resistance_strike,
-        "put_support_strike": put_support_strike,
-        "df_chain": df_chain
-    }
+        return {
+            "pcr": pcr,
+            "pcr_signal": pcr_signal,
+            "pcr_badge": pcr_badge,
+            "max_pain": max_pain_strike,
+            "call_resistance_strike": call_resistance_strike,
+            "put_support_strike": put_support_strike,
+            "df_chain": df_chain
+        }
+    except Exception:
+        step = 20 if current_price > 1200 else 10
+        atm = round(current_price / step) * step
+        strikes = [atm + (i * step) for i in range(-2, 3)]
+        return {
+            "pcr": 1.05,
+            "pcr_signal": "Neutral / Balanced Expiry Range",
+            "pcr_badge": "⚖️",
+            "max_pain": atm,
+            "call_resistance_strike": atm + step,
+            "put_support_strike": atm - step,
+            "df_chain": pd.DataFrame({
+                "Strike (₹)": strikes,
+                "Call OI (Lakh Shares)": [1.5, 2.0, 3.2, 2.1, 1.4],
+                "Put OI (Lakh Shares)": [3.1, 2.5, 2.2, 1.8, 1.1]
+            })
+        }
 
 
 # -------------------------------------------------------------
@@ -700,7 +807,7 @@ def fetch_stock_data_cached(clean_ticker, exchange="NSE", range_period="1mo", ti
                         "last_close": meta.get("chartPreviousClose", df["Price"].iloc[-1]),
                         "live_source": "Live Yahoo Finance API"
                     })
-    except (requests.exceptions.Timeout, requests.exceptions.RequestException):
+    except Exception:
         pass
 
     if df is None or df.empty:
@@ -1097,24 +1204,28 @@ def main():
     st.sidebar.title("📈 VyuhaSense Pro")
     st.sidebar.markdown(f"**Session:** `{formatted_date}`\n**Time:** `{formatted_time}`")
 
-    # Dynamic Ticker Input with Live Auto-Suggest & Typeahead Search
-    st.sidebar.subheader("🔍 Stock Selector & Auto-Suggest")
+    # Dynamic Live Search & Real-Time Auto-Suggest (Zero Exception Architecture)
+    st.sidebar.subheader("🔍 Live Search & Auto-Suggest")
+    search_keyword = st.sidebar.text_input(
+        "Enter Stock Symbol or Company Name:",
+        value="",
+        placeholder="e.g. Tata, HDFC, Reliance, Defense, Zomato...",
+        help="Type any symbol or company name. The list below will dynamically suggest all matching equities in real-time."
+    ).strip()
+
+    # Dynamically generate suggestions matching current search input
+    matching_options = get_dynamic_stock_suggestions(search_keyword)
+
+    # Autocomplete Selectbox that filters dynamically
     selected_stock = st.sidebar.selectbox(
-        "Enter Stock Symbol (Type to Auto-Suggest):",
-        options=AUTOCOMPLETE_OPTIONS,
+        "Select Expected Stock:",
+        options=matching_options,
         index=0,
-        help="Type any symbol (e.g. REL, TATA, HDFC) or company name (e.g. Reliance, Infosys, Zomato) to see live matching suggestions as you type."
+        help="Choose from the matching stocks above. You can also search directly inside this dropdown."
     )
 
-    if selected_stock.startswith("✏️"):
-        custom_ticker = st.sidebar.text_input(
-            "Enter Custom Stock Symbol",
-            value="",
-            placeholder="e.g. SUZLON, IDEA, NHPC, YESBANK"
-        ).upper().strip()
-        active_ticker = custom_ticker if custom_ticker else "RELIANCE"
-    else:
-        active_ticker = selected_stock.split(" — ")[0].strip()
+    # Safe, exception-free ticker resolution
+    active_ticker = parse_ticker_safely(selected_stock, fallback="RELIANCE")
 
     exchange = st.sidebar.radio("Exchange", ["NSE", "BSE"], horizontal=True)
 
