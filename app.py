@@ -26,8 +26,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import requests
-
 from datetime import datetime, timedelta, timezone
+
 # Explicit Indian Standard Time (IST = UTC + 5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -461,6 +461,95 @@ SECTOR_MACRO_MATRIX = {
 }
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_live_macro_indicators():
+    """
+    Dynamically fetches live global macro benchmarks from Yahoo Finance:
+    - Brent Crude Oil Futures (BZ=F)
+    - USD/INR Currency Pair (INR=X)
+    - NIFTY 50 Index (^NSEI)
+    Falls back gracefully to institutional benchmark defaults when offline.
+    """
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    
+    # 1. Brent Crude Oil (BZ=F)
+    brent_price = 74.50
+    brent_change_pct = 0.0
+    brent_source = "Offline Baseline"
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/BZ=F?interval=1d&range=5d"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            payload = res.json()
+            chart_res = payload.get("chart", {}).get("result", [])
+            if chart_res:
+                quotes = chart_res[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                closes = [q for q in quotes if q is not None and not np.isnan(q)]
+                if len(closes) >= 1:
+                    brent_price = round(float(closes[-1]), 2)
+                    if len(closes) >= 2:
+                        brent_change_pct = round(((closes[-1] - closes[-2]) / closes[-2]) * 100, 2)
+                    brent_source = "Live Yahoo Finance Feed"
+    except Exception:
+        pass
+
+    # 2. USD / INR (INR=X)
+    usdinr_rate = 84.08
+    usdinr_change_pct = 0.0
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/INR=X?interval=1d&range=5d"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            payload = res.json()
+            chart_res = payload.get("chart", {}).get("result", [])
+            if chart_res:
+                quotes = chart_res[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                closes = [q for q in quotes if q is not None and not np.isnan(q)]
+                if len(closes) >= 1:
+                    usdinr_rate = round(float(closes[-1]), 2)
+                    if len(closes) >= 2:
+                        usdinr_change_pct = round(((closes[-1] - closes[-2]) / closes[-2]) * 100, 2)
+    except Exception:
+        pass
+
+    # 3. NIFTY 50 (^NSEI)
+    nifty_quote = 22418.90
+    nifty_change_pct = -1.18
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ENSEI?interval=1d&range=5d"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            payload = res.json()
+            chart_res = payload.get("chart", {}).get("result", [])
+            if chart_res:
+                quotes = chart_res[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                closes = [q for q in quotes if q is not None and not np.isnan(q)]
+                if len(closes) >= 1:
+                    nifty_quote = round(float(closes[-1]), 2)
+                    if len(closes) >= 2:
+                        nifty_change_pct = round(((closes[-1] - closes[-2]) / closes[-2]) * 100, 2)
+    except Exception:
+        pass
+
+    if brent_change_pct > 0.4:
+        brent_trend = f"Firming ({brent_change_pct:+.1f}%)"
+    elif brent_change_pct < -0.4:
+        brent_trend = f"Easing ({brent_change_pct:+.1f}%)"
+    else:
+        brent_trend = "Stable Range"
+
+    return {
+        "brent_price": brent_price,
+        "brent_change_pct": brent_change_pct,
+        "brent_trend": brent_trend,
+        "brent_source": brent_source,
+        "usdinr_rate": usdinr_rate,
+        "usdinr_change_pct": usdinr_change_pct,
+        "nifty_quote": nifty_quote,
+        "nifty_change_pct": nifty_change_pct
+    }
+
+
 def calculate_macro_sentiment_score(sector, crude_override=None, fed_stance_override=None, war_level_override=None):
     profile = SECTOR_MACRO_MATRIX.get(sector, SECTOR_MACRO_MATRIX["Broad Market / Diversified"])
     fed_impact = profile["fed_impact"]
@@ -573,7 +662,7 @@ def fetch_stock_data_cached(clean_ticker, exchange="NSE", range_period="1mo", ti
         noise = np.random.normal(loc=drift, scale=0.015, size=days)
         prices = base_price * np.cumprod(1 + noise)
 
-        dates = pd.date_range(end=datetime.now(), periods=days, freq="D")
+        dates = pd.date_range(end=datetime.now(IST), periods=days, freq="D")
         highs = prices * (1 + np.random.uniform(0.005, 0.02, days))
         lows = prices * (1 - np.random.uniform(0.005, 0.02, days))
         opens = prices * (1 + np.random.uniform(-0.01, 0.01, days))
@@ -915,16 +1004,39 @@ def generate_trade_verdict(current_price, current_sma, current_rsi, macd_hist, b
 # 9. Main Streamlit User Interface
 # -------------------------------------------------------------
 def main():
-    # Live Date & Time Tracker (Current Local Session)
+    # Live Date & Time Tracker (Current Local Session explicitly in IST)
     current_dt = datetime.now(IST)
     formatted_date = current_dt.strftime("%A, %d %B %Y")
     formatted_time = current_dt.strftime("%I:%M:%S %p IST")
+
+    # Dynamic Indian Market Session Status (09:15 - 15:30 IST, Monday-Friday)
+    weekday = current_dt.weekday()  # 0=Monday, 4=Friday, 5=Saturday, 6=Sunday
+    current_minute = current_dt.hour * 60 + current_dt.minute
+    m_open = 9 * 60 + 15   # 09:15 AM
+    m_close = 15 * 60 + 30 # 03:30 PM
+
+    if weekday >= 5:
+        session_badge = "🔴 MARKET CLOSED (WEEKEND)"
+        session_bg = "rgba(244, 63, 94, 0.2)"
+        session_color = "#f43f5e"
+    elif current_minute < m_open:
+        session_badge = "🟡 PRE-MARKET (OPENS 09:15 IST)"
+        session_bg = "rgba(245, 158, 11, 0.2)"
+        session_color = "#f59e0b"
+    elif current_minute > m_close:
+        session_badge = "🔴 MARKET CLOSED (POST-MARKET)"
+        session_bg = "rgba(244, 63, 94, 0.2)"
+        session_color = "#f43f5e"
+    else:
+        session_badge = "🟢 LIVE MARKET SESSION"
+        session_bg = "rgba(16, 185, 129, 0.2)"
+        session_color = "#10b981"
 
     # Header with Live Date & Time Banner
     st.markdown(
         f"<div style='background: linear-gradient(90deg, #0f172a 0%, #1e293b 100%); padding: 12px 18px; border-radius: 10px; border: 1px solid #334155; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;'>"
         f"<div><span style='font-size: 1.25rem; font-weight: bold; color: #38bdf8;'>📈 VyuhaSense India — Institutional Pro</span>"
-        f"<span style='font-size: 0.8rem; background: rgba(16, 185, 129, 0.2); color: #10b981; padding: 2px 8px; border-radius: 4px; margin-left: 10px; font-weight: 600;'>NSE / BSE LIVE</span></div>"
+        f"<span style='font-size: 0.8rem; background: {session_bg}; color: {session_color}; padding: 2px 8px; border-radius: 4px; margin-left: 10px; font-weight: 600;'>{session_badge}</span></div>"
         f"<div style='font-size: 0.85rem; color: #cbd5e1;'>"
         f"📅 <strong>{formatted_date}</strong> &nbsp;|&nbsp; 🕒 <strong>{formatted_time}</strong> &nbsp;|&nbsp; 📍 Ahmedabad, India"
         f"</div></div>",
@@ -955,10 +1067,13 @@ def main():
     risk_per_trade_pct = st.sidebar.slider("Risk Per Trade (%)", min_value=0.5, max_value=3.0, value=1.0, step=0.25)
     range_period = st.sidebar.selectbox("Time Horizon", ["1mo", "3mo", "6mo", "1y"], index=0)
 
+    # Dynamic Live Macro Indicators (Brent Crude, USD/INR, Nifty 50)
+    live_macro = fetch_live_macro_indicators()
+
     # Top Macro Benchmark Bar
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("NIFTY 50 (NSE)", "₹22,418.90", "-1.18%")
-    col2.metric("BRENT CRUDE OIL", f"${DEFAULT_MACRO_FACTORS['brent_crude']['price']}/bbl", "Stable Range")
+    col1.metric("NIFTY 50 (NSE)", f"₹{live_macro['nifty_quote']:,.2f}", f"{live_macro['nifty_change_pct']:+.2f}%")
+    col2.metric("BRENT CRUDE OIL", f"${live_macro['brent_price']:,.2f}/bbl", f"{live_macro['brent_trend']}")
     col3.metric("US FED FUNDS RATE", f"{DEFAULT_MACRO_FACTORS['fed_funds_rate']['rate']}%", "Dovish Easing")
     col4.metric("GEOPOLITICAL RISK", "Elevated Alert", "Middle East Watch")
 
@@ -980,7 +1095,7 @@ def main():
         smart_money = analyze_smart_money_footprint(df)
         sector = meta_info["sector"]
         fundamentals = meta_info["fundamentals"]
-        macro_profile = calculate_macro_sentiment_score(sector)
+        macro_profile = calculate_macro_sentiment_score(sector, crude_override=live_macro["brent_price"])
 
         current_price = float(df["Price"].iloc[-1])
         rolling_sma = df["SMA_20"]
@@ -1309,8 +1424,9 @@ def main():
 
         mc1, mc2, mc3 = st.columns(3)
         with mc1:
-            st.markdown("#### 🛢️ Brent Crude Oil ($74.50/bbl)")
+            st.markdown(f"#### 🛢️ Brent Crude Oil (${live_macro['brent_price']:,.2f}/bbl)")
             st.markdown(
+                f"• **Market Data Feed:** `{live_macro['brent_trend']}` ({live_macro['brent_source']})\n"
                 "• **Indian Economy Link:** India imports ~85% of crude. High crude widens the Current Account Deficit (CAD) and weakens the Rupee (INR).\n"
                 "• **Vulnerable Sectors:** **Paints (Asian Paints)** & **Aviation (IndiGo)** where crude derivatives represent 40-50% of operating costs.\n"
                 "• **Beneficiary Sectors:** **Upstream Oil (ONGC, Oil India)** and refining margins."
@@ -1336,7 +1452,7 @@ def main():
 
         sim1, sim2, sim3 = st.columns(3)
         with sim1:
-            sim_crude = st.slider("Simulate Crude Oil Price ($/bbl)", min_value=60.0, max_value=120.0, value=74.5, step=2.5)
+            sim_crude = st.slider("Simulate Crude Oil Price ($/bbl)", min_value=60.0, max_value=120.0, value=float(np.clip(live_macro["brent_price"], 60.0, 120.0)), step=1.0)
         with sim2:
             sim_fed = st.selectbox("Simulate US Fed Stance", ["Dovish (Rate Cuts)", "Neutral (Pause)", "Hawkish (Rate Hikes)"], index=0)
         with sim3:
