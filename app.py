@@ -60,26 +60,77 @@ plt.rcParams["font.family"] = "sans-serif"
 
 
 # -------------------------------------------------------------
-# 1. Sector Mappings & Fundamental Health Profiles
+# 1. Master Indian Equities Directory & Auto-Suggest Index
 # -------------------------------------------------------------
-STOCK_SECTOR_MAP = {
-    "RELIANCE": "Energy & Conglomerate",
-    "TCS": "IT Services",
-    "INFY": "IT Services",
-    "WIPRO": "IT Services",
-    "HDFCBANK": "Banking & Financials",
-    "ICICIBANK": "Banking & Financials",
-    "SBIN": "Banking & Financials",
-    "ITC": "FMCG & Diversified",
-    "TATAMOTORS": "Automobile & EV",
-    "MARUTI": "Automobile",
-    "ASIANPAINT": "Paints & Specialty Chemicals",
-    "INDIGO": "Aviation & Travel",
-    "HAL": "Aerospace & Defense",
-    "BEL": "Defense Electronics",
-    "ONGC": "Upstream Oil & Gas",
-    "ZOMATO": "Consumer Tech / Internet"
+STOCK_DIRECTORY = {
+    "RELIANCE": {"name": "Reliance Industries Ltd.", "sector": "Energy & Conglomerate"},
+    "TCS": {"name": "Tata Consultancy Services Ltd.", "sector": "IT Services"},
+    "HDFCBANK": {"name": "HDFC Bank Ltd.", "sector": "Banking & Financials"},
+    "INFY": {"name": "Infosys Ltd.", "sector": "IT Services"},
+    "ICICIBANK": {"name": "ICICI Bank Ltd.", "sector": "Banking & Financials"},
+    "BHARTIARTL": {"name": "Bharti Airtel Ltd.", "sector": "Broad Market / Diversified"},
+    "SBIN": {"name": "State Bank of India", "sector": "Banking & Financials"},
+    "ITC": {"name": "ITC Limited", "sector": "FMCG & Diversified"},
+    "HINDUNILVR": {"name": "Hindustan Unilever Ltd.", "sector": "FMCG & Diversified"},
+    "LT": {"name": "Larsen & Toubro Ltd.", "sector": "Broad Market / Diversified"},
+    "BAJFINANCE": {"name": "Bajaj Finance Ltd.", "sector": "Banking & Financials"},
+    "TATAMOTORS": {"name": "Tata Motors Ltd.", "sector": "Automobile & EV"},
+    "MARUTI": {"name": "Maruti Suzuki India Ltd.", "sector": "Automobile & EV"},
+    "SUNPHARMA": {"name": "Sun Pharmaceutical Industries", "sector": "Broad Market / Diversified"},
+    "KOTAKBANK": {"name": "Kotak Mahindra Bank Ltd.", "sector": "Banking & Financials"},
+    "AXISBANK": {"name": "Axis Bank Ltd.", "sector": "Banking & Financials"},
+    "TITAN": {"name": "Titan Company Ltd.", "sector": "Broad Market / Diversified"},
+    "ASIANPAINT": {"name": "Asian Paints Ltd.", "sector": "Paints & Specialty Chemicals"},
+    "ADANIENT": {"name": "Adani Enterprises Ltd.", "sector": "Energy & Conglomerate"},
+    "ADANIPORTS": {"name": "Adani Ports & SEZ Ltd.", "sector": "Broad Market / Diversified"},
+    "TATASTEEL": {"name": "Tata Steel Ltd.", "sector": "Broad Market / Diversified"},
+    "NTPC": {"name": "NTPC Limited", "sector": "Energy & Conglomerate"},
+    "POWERGRID": {"name": "Power Grid Corp of India", "sector": "Broad Market / Diversified"},
+    "ONGC": {"name": "Oil & Natural Gas Corp Ltd.", "sector": "Upstream Oil & Gas"},
+    "COALINDIA": {"name": "Coal India Ltd.", "sector": "Upstream Oil & Gas"},
+    "INDIGO": {"name": "InterGlobe Aviation Ltd. (IndiGo)", "sector": "Aviation & Travel"},
+    "HAL": {"name": "Hindustan Aeronautics Ltd.", "sector": "Aerospace & Defense"},
+    "BEL": {"name": "Bharat Electronics Ltd.", "sector": "Aerospace & Defense"},
+    "BDL": {"name": "Bharat Dynamics Ltd.", "sector": "Aerospace & Defense"},
+    "MAZDOCK": {"name": "Mazagon Dock Shipbuilders", "sector": "Aerospace & Defense"},
+    "COCHINSHIP": {"name": "Cochin Shipyard Ltd.", "sector": "Aerospace & Defense"},
+    "ZOMATO": {"name": "Zomato Ltd.", "sector": "Consumer Tech / Internet"},
+    "WIPRO": {"name": "Wipro Ltd.", "sector": "IT Services"},
+    "HCLTECH": {"name": "HCL Technologies Ltd.", "sector": "IT Services"},
+    "TECHM": {"name": "Tech Mahindra Ltd.", "sector": "IT Services"},
+    "BAJAJFINSV": {"name": "Bajaj Finserv Ltd.", "sector": "Banking & Financials"},
+    "ULTRACEMCO": {"name": "UltraTech Cement Ltd.", "sector": "Broad Market / Diversified"},
+    "JSWSTEEL": {"name": "JSW Steel Ltd.", "sector": "Broad Market / Diversified"},
+    "GRASIM": {"name": "Grasim Industries Ltd.", "sector": "Paints & Specialty Chemicals"},
+    "CIPLA": {"name": "Cipla Ltd.", "sector": "Broad Market / Diversified"},
+    "DRREDDY": {"name": "Dr. Reddy's Laboratories Ltd.", "sector": "Broad Market / Diversified"},
+    "APOLLOHOSP": {"name": "Apollo Hospitals Enterprise", "sector": "Broad Market / Diversified"},
+    "EICHERMOT": {"name": "Eicher Motors Ltd. (Royal Enfield)", "sector": "Automobile & EV"},
+    "HEROMOTOCO": {"name": "Hero MotoCorp Ltd.", "sector": "Automobile & EV"},
+    "NESTLEIND": {"name": "Nestle India Ltd.", "sector": "FMCG & Diversified"},
+    "BRITANNIA": {"name": "Britannia Industries Ltd.", "sector": "FMCG & Diversified"},
+    "TRENT": {"name": "Trent Ltd. (Westside/Zudio)", "sector": "Broad Market / Diversified"},
+    "JIOFIN": {"name": "Jio Financial Services Ltd.", "sector": "Banking & Financials"},
+    "TATACHEM": {"name": "Tata Chemicals Ltd.", "sector": "Paints & Specialty Chemicals"},
+    "BPCL": {"name": "Bharat Petroleum Corp Ltd.", "sector": "Energy & Conglomerate"},
+    "IOC": {"name": "Indian Oil Corp Ltd.", "sector": "Energy & Conglomerate"},
+    "SUZLON": {"name": "Suzlon Energy Ltd.", "sector": "Energy & Conglomerate"},
+    "PAYTM": {"name": "One97 Communications (Paytm)", "sector": "Consumer Tech / Internet"},
+    "IRCTC": {"name": "Indian Railway Catering & Tourism Corp", "sector": "Broad Market / Diversified"},
+    "RVNL": {"name": "Rail Vikas Nigam Ltd.", "sector": "Broad Market / Diversified"},
+    "IRFC": {"name": "Indian Railway Finance Corp", "sector": "Banking & Financials"},
+    "BHEL": {"name": "Bharat Heavy Electricals Ltd.", "sector": "Broad Market / Diversified"},
+    "VEDL": {"name": "Vedanta Ltd.", "sector": "Broad Market / Diversified"}
 }
+
+STOCK_SECTOR_MAP = {sym: data["sector"] for sym, data in STOCK_DIRECTORY.items()}
+
+AUTOCOMPLETE_OPTIONS = [
+    f"{sym} — {data['name']} [{data['sector']}]"
+    for sym, data in STOCK_DIRECTORY.items()
+]
+AUTOCOMPLETE_OPTIONS.append("✏️ (Type Other Unlisted Ticker...)")
+
 
 
 def get_sector_for_ticker(ticker):
@@ -1046,19 +1097,25 @@ def main():
     st.sidebar.title("📈 VyuhaSense Pro")
     st.sidebar.markdown(f"**Session:** `{formatted_date}`\n**Time:** `{formatted_time}`")
 
-    # Dynamic Ticker Input
-    ticker_input = st.sidebar.text_input(
-        "Enter Stock Symbol",
-        value="RELIANCE",
-        placeholder="e.g. ZOMATO, ITC, TCS, HAL, INDIGO"
-    ).upper().strip()
+    # Dynamic Ticker Input with Live Auto-Suggest & Typeahead Search
+    st.sidebar.subheader("🔍 Stock Selector & Auto-Suggest")
+    selected_stock = st.sidebar.selectbox(
+        "Enter Stock Symbol (Type to Auto-Suggest):",
+        options=AUTOCOMPLETE_OPTIONS,
+        index=0,
+        help="Type any symbol (e.g. REL, TATA, HDFC) or company name (e.g. Reliance, Infosys, Zomato) to see live matching suggestions as you type."
+    )
 
-    quick_options = [
-        "(Custom Ticker Above)", "RELIANCE", "TCS", "INFY", "HDFCBANK", 
-        "ITC", "TATAMOTORS", "ASIANPAINT", "INDIGO", "HAL", "ONGC", "ZOMATO"
-    ]
-    quick_choice = st.sidebar.selectbox("Quick Equities by Sector", quick_options)
-    active_ticker = quick_choice if quick_choice != "(Custom Ticker Above)" else (ticker_input if ticker_input else "RELIANCE")
+    if selected_stock.startswith("✏️"):
+        custom_ticker = st.sidebar.text_input(
+            "Enter Custom Stock Symbol",
+            value="",
+            placeholder="e.g. SUZLON, IDEA, NHPC, YESBANK"
+        ).upper().strip()
+        active_ticker = custom_ticker if custom_ticker else "RELIANCE"
+    else:
+        active_ticker = selected_stock.split(" — ")[0].strip()
+
     exchange = st.sidebar.radio("Exchange", ["NSE", "BSE"], horizontal=True)
 
     st.sidebar.markdown("---")
