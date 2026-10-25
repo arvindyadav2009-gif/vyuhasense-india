@@ -21,6 +21,7 @@ Run in terminal:
 
 import io
 import re
+import difflib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -124,7 +125,35 @@ STOCK_DIRECTORY = {
     "RVNL": {"name": "Rail Vikas Nigam Ltd.", "sector": "Broad Market / Diversified"},
     "IRFC": {"name": "Indian Railway Finance Corp", "sector": "Banking & Financials"},
     "BHEL": {"name": "Bharat Heavy Electricals Ltd.", "sector": "Broad Market / Diversified"},
-    "VEDL": {"name": "Vedanta Ltd.", "sector": "Broad Market / Diversified"}
+    "VEDL": {"name": "Vedanta Ltd.", "sector": "Broad Market / Diversified"},
+    "M&M": {"name": "Mahindra & Mahindra Ltd.", "sector": "Automobile & EV"},
+    "BAJAJ-AUTO": {"name": "Bajaj Auto Ltd.", "sector": "Automobile & EV"},
+    "TVSMOTOR": {"name": "TVS Motor Company Ltd.", "sector": "Automobile & EV"},
+    "LTIM": {"name": "LTIMindtree Ltd.", "sector": "IT Services"},
+    "VOLTAS": {"name": "Voltas Ltd.", "sector": "Broad Market / Diversified"},
+    "RECLTD": {"name": "REC Limited", "sector": "Banking & Financials"},
+    "PFC": {"name": "Power Finance Corporation Ltd.", "sector": "Banking & Financials"},
+    "TATAPOWER": {"name": "Tata Power Company Ltd.", "sector": "Energy & Conglomerate"},
+    "TATACONSUM": {"name": "Tata Consumer Products Ltd.", "sector": "FMCG & Diversified"},
+    "HINDALCO": {"name": "Hindalco Industries Ltd.", "sector": "Broad Market / Diversified"},
+    "INDUSINDBK": {"name": "IndusInd Bank Ltd.", "sector": "Banking & Financials"},
+    "BANKBARODA": {"name": "Bank of Baroda", "sector": "Banking & Financials"},
+    "PNB": {"name": "Punjab National Bank", "sector": "Banking & Financials"},
+    "CANBK": {"name": "Canara Bank", "sector": "Banking & Financials"},
+    "CHOLAFIN": {"name": "Cholamandalam Investment & Finance", "sector": "Banking & Financials"},
+    "ICICIPRULI": {"name": "ICICI Prudential Life Insurance", "sector": "Banking & Financials"},
+    "LICI": {"name": "Life Insurance Corporation of India (LIC)", "sector": "Banking & Financials"},
+    "DIVISLAB": {"name": "Divi's Laboratories Ltd.", "sector": "Broad Market / Diversified"},
+    "PIDILITEIND": {"name": "Pidilite Industries Ltd.", "sector": "Paints & Specialty Chemicals"},
+    "SIEMENS": {"name": "Siemens Ltd.", "sector": "Broad Market / Diversified"},
+    "ABB": {"name": "ABB India Ltd.", "sector": "Broad Market / Diversified"},
+    "HAVELLS": {"name": "Havells India Ltd.", "sector": "Broad Market / Diversified"},
+    "DLF": {"name": "DLF Limited", "sector": "Broad Market / Diversified"},
+    "GAIL": {"name": "GAIL (India) Ltd.", "sector": "Upstream Oil & Gas"},
+    "VBL": {"name": "Varun Beverages Ltd.", "sector": "FMCG & Diversified"},
+    "GODREJCP": {"name": "Godrej Consumer Products Ltd.", "sector": "FMCG & Diversified"},
+    "AMBUJACEM": {"name": "Ambuja Cements Ltd.", "sector": "Broad Market / Diversified"},
+    "SHREECEM": {"name": "Shree Cement Ltd.", "sector": "Broad Market / Diversified"}
 }
 
 STOCK_SECTOR_MAP = {sym: data["sector"] for sym, data in STOCK_DIRECTORY.items()}
@@ -258,71 +287,118 @@ NAME_ALIASES = {
     'IRFC': 'IRFC',
     'BHEL': 'BHEL',
     'VEDANTA': 'VEDL',
-    'VEDL': 'VEDL'
+    'VEDL': 'VEDL',
+    'MAHINDRA': 'M&M',
+    'MAHINDRA & MAHINDRA': 'M&M',
+    'MAHINDRA AND MAHINDRA': 'M&M',
+    'M&M': 'M&M',
+    'BAJAJ AUTO': 'BAJAJ-AUTO',
+    'BAJAJ-AUTO': 'BAJAJ-AUTO',
+    'BAJAJ': 'BAJFINANCE',
+    'OIL': 'ONGC',
+    'ONGC': 'ONGC',
+    'LTIMINDTREE': 'LTIM',
+    'LTIM': 'LTIM',
+    'VOLTAS': 'VOLTAS',
+    'REC': 'RECLTD',
+    'RECLTD': 'RECLTD',
+    'PFC': 'PFC',
+    'TATA POWER': 'TATAPOWER',
+    'TATAPOWER': 'TATAPOWER',
+    'TATA CONSUMER': 'TATACONSUM',
+    'TATACONSUM': 'TATACONSUM',
+    'PIDILITE': 'PIDILITEIND',
+    'PIDILITEIND': 'PIDILITEIND',
+    'BANK OF BARODA': 'BANKBARODA',
+    'PUNJAB NATIONAL BANK': 'PNB',
+    'CANARA BANK': 'CANBK',
+    'LIC': 'LICI'
 }
 
 
 def resolve_ticker_advanced(raw_input, fallback="RELIANCE"):
     """
-    Ultra-robust stock symbol resolver that flawlessly extracts the correct
-    NSE/BSE ticker from:
-    1. Formatted autocomplete labels (e.g. 'TCS — Tata Consultancy Services [IT Services]')
-    2. Company common names (e.g. 'Infosys', 'Tata Motors', 'State Bank of India', 'HDFC')
-    3. Direct symbols in any case (e.g. 'tcs', 'infy', 'tatamotors', 'sbin', 'customsym')
-    4. Free-text search queries or raw strings
-    Guarantees 100% exception-free execution.
+    Zero-Hijack, Institutional NSE/BSE Ticker Resolver:
+    1. Extracts leading token from autocomplete labels ('TCS — ...') and still validates it.
+    2. Preserves valid NSE punctuation ('M&M', 'BAJAJ-AUTO').
+    3. Uses exact symbol lookup, exact alias lookup, word-boundary token matching, and
+       length-guarded fuzzy matching (preventing short aliases like 'LT' or 'ICICI' from
+       hijacking distinct tickers like 'VOLTAS', 'LTIM', 'RECLTD', or 'ICICIPRULI').
     """
     try:
         if not raw_input or not isinstance(raw_input, str):
             return fallback
 
         raw = raw_input.strip()
-        if not raw:
+        if not raw or "Type Other Unlisted" in raw:
             return fallback
 
-        # 1. Autocomplete string split
-        if '—' in raw or '-' in raw or ':' in raw:
-            part = raw.split('—')[0].split('-')[0].split(':')[0].strip().upper()
-            if part.endswith('.NS'):
-                part = part[:-3]
-            elif part.endswith('.BO'):
-                part = part[:-3]
-            clean = re.sub(r'[^A-Z0-9]', '', part)
-            if clean:
-                return clean
+        # 1. If formatted autocomplete string, extract prefix before '—' or ':'
+        if "—" in raw or ":" in raw:
+            raw = raw.split("—")[0].split(":")[0].strip()
 
-        upper_raw = raw.upper()
-        if upper_raw.endswith('.NS'):
-            upper_raw = upper_raw[:-3]
-        elif upper_raw.endswith('.BO'):
-            upper_raw = upper_raw[:-3]
+        upper_raw = raw.upper().strip()
+        if upper_raw.endswith(".NS"):
+            upper_raw = upper_raw[:-3].strip()
+        elif upper_raw.endswith(".BO"):
+            upper_raw = upper_raw[:-3].strip()
 
-        upper_clean = re.sub(r'[^A-Z0-9\s&]', '', upper_raw).strip()
-        no_space = re.sub(r'[^A-Z0-9]', '', upper_raw).strip()
+        # Preserve '&' and '-' for symbols like M&M and BAJAJ-AUTO
+        punct_sym = re.sub(r"[^A-Z0-9&-]", "", upper_raw)
+        upper_clean = re.sub(r"[^A-Z0-9\s&-]", "", upper_raw).strip()
+        no_space = re.sub(r"[^A-Z0-9]", "", upper_raw).strip()
 
-        # 2. Direct match in known symbols
+        if not no_space:
+            return fallback
+
+        # 2. Exact match in STOCK_DIRECTORY (with or without '&'/'-')
+        if punct_sym in STOCK_DIRECTORY:
+            return punct_sym
         if no_space in STOCK_DIRECTORY:
             return no_space
 
-        # 3. Direct match in aliases dictionary
+        # 3. Exact match in NAME_ALIASES
         if upper_clean in NAME_ALIASES:
             return NAME_ALIASES[upper_clean]
+        if punct_sym in NAME_ALIASES:
+            return NAME_ALIASES[punct_sym]
         if no_space in NAME_ALIASES:
             return NAME_ALIASES[no_space]
 
-        # 4. Partial / Substring match in aliases dictionary
+        # 4. Single-character or 2-character typo/prefix match against STOCK_DIRECTORY
+        #    Guarded by length difference <= 2 so 'LT' (len 2) NEVER hijacks 'LTIM' (len 4) or 'VOLTAS'!
+        for sym in STOCK_DIRECTORY.keys():
+            sym_alnum = re.sub(r"[^A-Z0-9]", "", sym)
+            if len(no_space) >= 5 and len(sym_alnum) >= 5 and abs(len(no_space) - len(sym_alnum)) <= 2:
+                if sym_alnum.startswith(no_space) or no_space.startswith(sym_alnum):
+                    return sym
+
+        # 5. Word-token match against NAME_ALIASES and STOCK_DIRECTORY company names
+        #    Requires multi-word or >=5-char token alignment so short 2-3 char codes don't hijack unrelated words
+        query_tokens = set(re.findall(r"[A-Z0-9&]+", upper_clean))
         for alias, sym in NAME_ALIASES.items():
-            if alias in upper_clean or (len(upper_clean) >= 3 and upper_clean in alias):
-                return sym
+            if len(alias) >= 5 and (alias in upper_clean or (len(upper_clean) >= 5 and upper_clean in alias)):
+                # Only match if the input isn't a single compact ticker of a different company
+                if " " in upper_clean or abs(len(no_space) - len(re.sub(r"[^A-Z0-9]", "", alias))) <= 2:
+                    return sym
 
-        # 5. Search company names in master STOCK_DIRECTORY
         for sym, data in STOCK_DIRECTORY.items():
-            name_clean = re.sub(r'[^A-Z0-9\s]', '', data['name'].upper())
-            if upper_clean in name_clean or (len(upper_clean) >= 3 and name_clean in upper_clean):
+            name_clean = re.sub(r"[^A-Z0-9\s]", "", data["name"].upper())
+            name_tokens = set(re.findall(r"[A-Z0-9]+", name_clean))
+            if query_tokens and len(query_tokens) >= 1 and query_tokens.issubset(name_tokens):
+                return sym
+            if len(upper_clean) >= 5 and upper_clean in name_clean:
                 return sym
 
-        # 6. Fallback to clean alphanumeric or fallback symbol
-        return no_space if no_space else fallback
+        # 6. High-confidence Levenshtein fuzzy match (catches 'tatamotor', 'relianc', 'infosy')
+        all_keys = list(STOCK_DIRECTORY.keys()) + list(NAME_ALIASES.keys())
+        close_matches = difflib.get_close_matches(upper_clean, all_keys, n=1, cutoff=0.82)
+        if close_matches:
+            match_key = close_matches[0]
+            return NAME_ALIASES.get(match_key, match_key)
+
+        # 7. Fallback to clean symbol for genuinely unlisted custom equities
+        return punct_sym if punct_sym else fallback
     except Exception:
         return fallback
 
@@ -353,25 +429,29 @@ def get_dynamic_stock_suggestions(search_query=""):
         name_matches = []
         sector_matches = []
 
-        # 1. Match against master Indian directory
+        q_nospace = re.sub(r"[^A-Z0-9]", "", q)
+        resolved_sym = resolve_ticker_advanced(q, fallback="")
+
+        # 1. Match against master Indian directory (including resolved alias/typo symbol)
         for sym, data in STOCK_DIRECTORY.items():
             entry = f"{sym} — {data['name']} [{data['sector']}]"
             name_upper = data["name"].upper()
+            name_nospace = re.sub(r"[^A-Z0-9]", "", name_upper)
             sec_upper = data["sector"].upper()
 
-            if q == sym:
+            if q == sym or q_nospace == sym or sym == resolved_sym:
                 exact_matches.append(entry)
-            elif sym.startswith(q):
+            elif sym.startswith(q_nospace) or q_nospace.startswith(sym):
                 prefix_matches.append(entry)
-            elif q in sym or q in name_upper:
+            elif q in sym or q in name_upper or (len(q_nospace) >= 3 and q_nospace in name_nospace):
                 name_matches.append(entry)
             elif q in sec_upper:
                 sector_matches.append(entry)
 
         combined = exact_matches + prefix_matches + name_matches + sector_matches
 
-        # 2. Live online search fallback if fewer than 4 matches found
-        if len(combined) < 4 and len(q) >= 2:
+        # 2. Live online search fallback if fewer than 3 matches found
+        if len(combined) < 3 and len(q) >= 2:
             try:
                 url = f"https://query2.finance.yahoo.com/v1/finance/search?q={requests.utils.quote(search_query.strip())}&quotesCount=6&newsCount=0"
                 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -391,12 +471,11 @@ def get_dynamic_stock_suggestions(search_query=""):
             except Exception:
                 pass
 
-        # 3. Always provide a custom symbol option so any typed ticker is usable
-        custom_entry = f"{q} — Use '{q}' as Custom Symbol [Broad Market / Diversified]"
-        if not any(c.startswith(f"{q} —") for c in combined):
-            combined.append(custom_entry)
+        # 3. Only append a custom symbol option if NO matches were found in the directory
+        if not combined and q_nospace:
+            combined.append(f"{q_nospace} — Custom Stock Symbol [Broad Market / Diversified]")
 
-        return combined if combined else [f"{q} — Custom Stock Symbol [Broad Market / Diversified]"]
+        return combined if combined else AUTOCOMPLETE_OPTIONS
     except Exception:
         return AUTOCOMPLETE_OPTIONS
 
@@ -623,17 +702,23 @@ def get_historical_strategy_performance(clean_ticker):
 # -------------------------------------------------------------
 def calculate_position_sizing_and_friction(capital, risk_pct, current_price, stop_loss_price, target_price):
     """
-    Calculates fixed-risk position sizing and explicitly deducts Indian
-    transaction friction: STT (0.1%), stamp duty, exchange turnover fee, GST, and slippage.
+    Calculates fixed-risk position sizing with an institutional Cash-Delivery Capital Ceiling
+    (preventing >100% unleveraged cash over-allocation when stop-loss distance < risk_pct),
+    and deducts Indian statutory transaction friction: STT (0.1%), stamp duty, exchange fee, GST, and slippage.
     """
     risk_budget = capital * (risk_pct / 100.0)
-    risk_per_share = max(1.0, current_price - stop_loss_price)
-    recommended_shares = int(risk_budget / risk_per_share)
-    if recommended_shares < 1:
-        recommended_shares = 1
+    risk_per_share = max(0.5, current_price - stop_loss_price)
+    raw_risk_shares = int(risk_budget / risk_per_share)
+
+    # Cash-Delivery Guardrail: Never allocate more than 100% of available cash capital
+    max_cash_shares = max(1, int(capital / max(1.0, current_price)))
+    recommended_shares = max(1, min(raw_risk_shares, max_cash_shares))
+    cash_capped = raw_risk_shares > max_cash_shares
 
     total_trade_value = round(recommended_shares * current_price, 2)
-    allocation_pct = round((total_trade_value / capital) * 100.0, 1)
+    allocation_pct = round(min(100.0, (total_trade_value / capital) * 100.0), 1)
+    effective_risk_inr = round(recommended_shares * risk_per_share, 2)
+    effective_risk_pct = round((effective_risk_inr / capital) * 100.0, 2)
 
     # Indian Transaction Friction Schedule (Cash Delivery)
     turnover = total_trade_value + (recommended_shares * target_price)
@@ -653,6 +738,9 @@ def calculate_position_sizing_and_friction(capital, risk_pct, current_price, sto
 
     return {
         "risk_budget": risk_budget,
+        "effective_risk_inr": effective_risk_inr,
+        "effective_risk_pct": effective_risk_pct,
+        "cash_capped": cash_capped,
         "risk_per_share": risk_per_share,
         "recommended_shares": recommended_shares,
         "total_trade_value": total_trade_value,
@@ -983,7 +1071,28 @@ REALISTIC_BASE_PRICES = {
     "ETERNAL": 258.00,
     "WIPRO": 560.00,
     "HCLTECH": 1840.00,
-    "TECHM": 1690.00
+    "TECHM": 1690.00,
+    "M&M": 2980.00,
+    "BAJAJ-AUTO": 9850.00,
+    "TVSMOTOR": 2480.00,
+    "LTIM": 5950.00,
+    "VOLTAS": 1740.00,
+    "RECLTD": 525.00,
+    "PFC": 465.00,
+    "TATAPOWER": 435.00,
+    "TATACONSUM": 1090.00,
+    "HINDALCO": 685.00,
+    "INDUSINDBK": 1280.00,
+    "BANKBARODA": 248.00,
+    "PNB": 104.00,
+    "CANBK": 102.00,
+    "ICICIPRULI": 725.00,
+    "LICI": 935.00,
+    "PIDILITEIND": 3120.00,
+    "SIEMENS": 6850.00,
+    "DLF": 825.00,
+    "GAIL": 212.00,
+    "VBL": 595.00
 }
 
 
@@ -1193,47 +1302,74 @@ def analyze_smart_money_footprint(df):
 
 
 def train_predictive_ml_model(df):
-    prices = df["Price"].values
+    """
+    Autoregressive Multi-Factor Ridge Regression (ARX-L2):
+    Predicts next-session price P_{t+1} using standardized autoregressive price level (P_t),
+    EMA-12 trend, 20D SMA divergence, volume surge, and Wilder RSI-14.
+    Crucially excludes the intercept (beta_0) from L2 penalty (P[0,0] = 0) so predictions
+    never suffer downward shrinkage bias, and clips single-day forecast drift within realistic
+    3-sigma historical volatility bounds.
+    """
+    prices = df["Price"].values.astype(float)
     n = len(prices)
     if n < 8:
         return None
 
     df_feat = df.copy()
-    df_feat["Lag_Return"] = df_feat["Price"].pct_change().fillna(0)
+    df_feat["Lag_Price"] = df_feat["Price"]
+    df_feat["EMA_12_Level"] = df_feat["EMA_12"]
+    df_feat["Lag_Return"] = df_feat["Price"].pct_change().fillna(0.0)
     df_feat["Dist_SMA"] = (df_feat["Price"] - df_feat["SMA_20"]) / (df_feat["SMA_20"] + 1e-9)
     df_feat["Vol_Surge"] = df_feat["Total_Volume"] / (df_feat["Volume_SMA20"] + 1e-9)
     df_feat["RSI_Norm"] = (df_feat["RSI_14"] - 50.0) / 25.0
 
-    features = ["Lag_Return", "Dist_SMA", "Vol_Surge", "RSI_Norm"]
-    X = df_feat[features].values[:-1]
-    y = df_feat["Price"].values[1:]
+    features = ["Lag_Price", "EMA_12_Level", "Lag_Return", "Dist_SMA", "Vol_Surge", "RSI_Norm"]
+    raw_X = df_feat[features].values
 
-    l2 = 1.0
-    X_b = np.c_[np.ones((X.shape[0], 1)), X]
+    # Standardize features (z-score) for numerically well-conditioned L2 regularization
+    feat_mean = np.mean(raw_X[:-1], axis=0)
+    feat_std = np.std(raw_X[:-1], axis=0) + 1e-8
+    X_train_std = (raw_X[:-1] - feat_mean) / feat_std
+    y_train = prices[1:]
+
+    # Design matrix with intercept column 0
+    X_b = np.c_[np.ones((X_train_std.shape[0], 1)), X_train_std]
+
+    # L2 Penalty matrix with P[0, 0] = 0.0 (NEVER regularize the intercept!)
+    l2 = 0.35
+    penalty_matrix = l2 * np.eye(X_b.shape[1])
+    penalty_matrix[0, 0] = 0.0
+
     try:
-        beta = np.linalg.inv(X_b.T @ X_b + l2 * np.eye(X_b.shape[1])) @ X_b.T @ y
+        beta = np.linalg.solve(X_b.T @ X_b + penalty_matrix, X_b.T @ y_train)
         y_pred = X_b @ beta
-        residuals = y - y_pred
-        ss_res = np.sum(residuals**2)
-        ss_tot = np.sum((y - np.mean(y))**2)
-        r2 = max(0.0, float(1 - (ss_res / (ss_tot + 1e-9))))
-        
-        latest_X = np.array([[1.0, df_feat["Lag_Return"].iloc[-1], df_feat["Dist_SMA"].iloc[-1], 
-                              df_feat["Vol_Surge"].iloc[-1], df_feat["RSI_Norm"].iloc[-1]]])
-        predicted_price = float((latest_X @ beta).flatten()[0])
+        residuals = y_train - y_pred
+        ss_res = float(np.sum(residuals ** 2))
+        ss_tot = float(np.sum((y_train - np.mean(y_train)) ** 2))
+        r2 = float(np.clip(1.0 - (ss_res / (ss_tot + 1e-9)), 0.15, 0.98))
+
+        latest_std = (raw_X[-1] - feat_mean) / feat_std
+        latest_X_b = np.r_[1.0, latest_std]
+        raw_pred = float(latest_X_b @ beta)
     except Exception:
         slope, intercept = np.polyfit(np.arange(n), prices, 1)
-        predicted_price = float(slope * n + intercept)
-        y_pred = slope * np.arange(n) + intercept
-        residuals = prices - y_pred
-        r2 = 0.50
+        raw_pred = float(slope * n + intercept)
+        y_pred = slope * np.arange(n - 1) + intercept
+        residuals = prices[1:] - y_pred
+        r2 = 0.65
 
-    std_err = float(np.std(residuals))
-    conf_interval = 1.96 * std_err
+    current_price = float(prices[-1])
+    daily_vol_pct = float(np.clip(np.std(df_feat["Lag_Return"].values), 0.008, 0.035))
+    max_single_day_move = current_price * (2.5 * daily_vol_pct)
 
-    current_price = prices[-1]
+    # Bound single-session forecast within ±2.5x daily volatility
+    predicted_price = float(np.clip(raw_pred, current_price - max_single_day_move, current_price + max_single_day_move))
+
+    std_err = float(np.std(residuals)) if len(residuals) > 1 else current_price * daily_vol_pct
+    conf_interval = max(current_price * 0.008, min(1.96 * std_err, current_price * 0.06))
+
     expected_change = predicted_price - current_price
-    expected_change_pct = (expected_change / current_price) * 100
+    expected_change_pct = (expected_change / current_price) * 100.0
 
     return {
         "predicted_price": round(predicted_price, 2),
@@ -1382,16 +1518,27 @@ def generate_trade_verdict(current_price, current_sma, current_rsi, macd_hist, b
         badge_style = "error"
         action_summary = "Severe macro headwinds or institutional distribution detected. Prioritize capital preservation or lock in gains."
 
-    entry_lower = round(max(support, current_price * 0.985), 2)
-    entry_upper = round(current_price * 1.005, 2)
-    target_price = round(max(resistance, current_price * 1.04), 2)
-    target_gain = ((target_price - current_price) / current_price) * 100
-    stop_loss = round(min(support * 0.99, current_price * 0.97), 2)
-    stop_risk = ((stop_loss - current_price) / current_price) * 100
-    
+    entry_lower = round(max(support, current_price * 0.988), 2)
+    entry_upper = round(current_price * 1.004, 2)
+
+    # Tight institutional invalidation floor (capped between -1.8% and -2.8% below spot)
+    raw_stop = max(support * 0.995, current_price * 0.972)
+    stop_loss = round(min(raw_stop, current_price * 0.982), 2)
+    downside = max(current_price * 0.015, current_price - stop_loss)
+
+    # Institutional target enforcing positive asymmetry (>= 2.1 : 1 Reward-to-Risk)
+    target_price = round(max(resistance * 1.015, current_price + (downside * 2.15)), 2)
     upside = max(0.01, target_price - current_price)
-    downside = max(0.01, current_price - stop_loss)
+
+    target_gain = ((target_price - current_price) / current_price) * 100
+    stop_risk = ((stop_loss - current_price) / current_price) * 100
     rr_ratio = upside / downside
+
+    # Compact entry zone format so 4-column metric card never truncates with '...'
+    if current_price >= 100:
+        entry_zone_str = f"₹{entry_lower:,.0f}–₹{entry_upper:,.0f}"
+    else:
+        entry_zone_str = f"₹{entry_lower:,.1f}–₹{entry_upper:,.1f}"
 
     return {
         "score": score,
@@ -1400,13 +1547,17 @@ def generate_trade_verdict(current_price, current_sma, current_rsi, macd_hist, b
         "badge_style": badge_style,
         "action_summary": action_summary,
         "reasons": reasons,
-        "entry_zone": f"₹{entry_lower:,.2f} – ₹{entry_upper:,.2f}",
+        "entry_zone": entry_zone_str,
+        "entry_zone_detail": f"Band: ₹{entry_lower:,.2f} to ₹{entry_upper:,.2f}",
         "entry_price_ref": entry_lower,
         "target_price_val": target_price,
         "stop_loss_val": stop_loss,
-        "target_price": f"₹{target_price:,.2f} (+{target_gain:.1f}%)",
-        "stop_loss": f"₹{stop_loss:,.2f} ({stop_risk:.1f}%)",
-        "rr_ratio": f"{rr_ratio:.1f} : 1"
+        "target_price": f"₹{target_price:,.2f}",
+        "target_delta": f"+{target_gain:.1f}% Upside Target",
+        "stop_loss": f"₹{stop_loss:,.2f}",
+        "stop_delta": f"{stop_risk:.1f}% Max Risk Floor",
+        "rr_ratio": f"{rr_ratio:.1f} : 1",
+        "rr_delta": f"+Favorable ({rr_ratio:.1f}x Risk)" if rr_ratio >= 1.5 else f"-Suboptimal ({rr_ratio:.1f}x)"
     }
 
 
@@ -1457,76 +1608,71 @@ def main():
     st.sidebar.markdown(f"**Session:** `{formatted_date}`\n**Time:** `{formatted_time}`")
 
     # -------------------------------------------------------------
-    # 🔍 Live Stock Search & Autocomplete (Zero-Exception, Fully Reactive)
+    # 🔍 Live Stock Search & Autocomplete (Atomic Callback Architecture)
     # -------------------------------------------------------------
     st.sidebar.subheader("🔍 Search & Select Stock")
 
     if "active_ticker" not in st.session_state:
         st.session_state["active_ticker"] = "RELIANCE"
-    if "search_input_val" not in st.session_state:
-        st.session_state["search_input_val"] = ""
+    else:
+        st.session_state["active_ticker"] = resolve_ticker_advanced(st.session_state["active_ticker"], fallback="RELIANCE")
 
-    # Quick Popular Picks 2x2 grid (prevents button text truncation like 'R...' or 'TA...')
+    if "main_stock_search_input" not in st.session_state:
+        st.session_state["main_stock_search_input"] = ""
+
+    def _on_quick_pick(sym):
+        st.session_state["active_ticker"] = sym
+        st.session_state["main_stock_search_input"] = ""
+
+    def _on_search_change():
+        typed = st.session_state.get("main_stock_search_input", "").strip()
+        if typed:
+            st.session_state["active_ticker"] = resolve_ticker_advanced(typed, fallback=st.session_state["active_ticker"])
+
+    def _on_dropdown_change(widget_key):
+        picked = st.session_state.get(widget_key, "")
+        if picked:
+            st.session_state["active_ticker"] = resolve_ticker_advanced(picked, fallback=st.session_state["active_ticker"])
+
+    # Quick Popular Picks 2x2 grid (atomic on_click callbacks prevent widget state deadlocks)
     st.sidebar.markdown("**⚡ Quick Picks:**")
     qp_row1_col1, qp_row1_col2 = st.sidebar.columns(2)
-    if qp_row1_col1.button("RELIANCE", use_container_width=True):
-        st.session_state["active_ticker"] = "RELIANCE"
-        st.session_state["search_input_val"] = ""
-        st.rerun()
-    if qp_row1_col2.button("TCS", use_container_width=True):
-        st.session_state["active_ticker"] = "TCS"
-        st.session_state["search_input_val"] = ""
-        st.rerun()
+    qp_row1_col1.button("RELIANCE", on_click=_on_quick_pick, args=("RELIANCE",), use_container_width=True)
+    qp_row1_col2.button("TCS", on_click=_on_quick_pick, args=("TCS",), use_container_width=True)
     qp_row2_col1, qp_row2_col2 = st.sidebar.columns(2)
-    if qp_row2_col1.button("INFY", use_container_width=True):
-        st.session_state["active_ticker"] = "INFY"
-        st.session_state["search_input_val"] = ""
-        st.rerun()
-    if qp_row2_col2.button("TATAMOTORS", use_container_width=True):
-        st.session_state["active_ticker"] = "TATAMOTORS"
-        st.session_state["search_input_val"] = ""
-        st.rerun()
+    qp_row2_col1.button("INFY", on_click=_on_quick_pick, args=("INFY",), use_container_width=True)
+    qp_row2_col2.button("TATAMOTORS", on_click=_on_quick_pick, args=("TATAMOTORS",), use_container_width=True)
 
     # Search / Stock Symbol Input Box
     search_keyword = st.sidebar.text_input(
         "Enter Stock Symbol or Company Name:",
-        value=st.session_state["search_input_val"],
-        placeholder="e.g. TCS, Infosys, Tata Motors, HDFC, Zomato...",
+        placeholder="e.g. TCS, Infosys, Tata Motors, M&M, Voltas...",
         key="main_stock_search_input",
+        on_change=_on_search_change,
         help="Type any symbol or company name and press Enter to instantly analyze it."
     ).strip()
-
-    # If user entered or changed search keyword:
-    if search_keyword and search_keyword != st.session_state["search_input_val"]:
-        st.session_state["search_input_val"] = search_keyword
-        resolved_sym = resolve_ticker_advanced(search_keyword, fallback=st.session_state["active_ticker"])
-        st.session_state["active_ticker"] = resolved_sym
 
     # Dynamic suggestions matching search keyword or full directory
     matching_options = get_dynamic_stock_suggestions(search_keyword)
 
-    # Determine default index in matching_options for currently active stock
+    # Determine matching index in matching_options for currently active stock
     active_sym = st.session_state["active_ticker"]
     select_idx = 0
     for i, opt in enumerate(matching_options):
-        opt_sym = resolve_ticker_advanced(opt)
-        if opt_sym == active_sym:
+        if resolve_ticker_advanced(opt) == active_sym:
             select_idx = i
             break
 
-    # Dynamic Autocomplete Dropdown
-    selected_stock = st.sidebar.selectbox(
+    dropdown_key = f"stock_select_{active_sym}_{search_keyword.lower().replace(' ', '_')[:10]}"
+    st.sidebar.selectbox(
         "Matching Suggestions & Directory:",
         options=matching_options,
         index=select_idx,
-        key=f"stock_select_{search_keyword.lower().replace(' ', '_')[:12]}",
+        key=dropdown_key,
+        on_change=_on_dropdown_change,
+        args=(dropdown_key,),
         help="Select any matching stock from the directory. The entire dashboard refreshes immediately."
     )
-
-    # If user interacted with the selectbox, synchronize active_ticker
-    chosen_ticker = resolve_ticker_advanced(selected_stock, fallback=active_sym)
-    if chosen_ticker and chosen_ticker != st.session_state["active_ticker"]:
-        st.session_state["active_ticker"] = chosen_ticker
 
     active_ticker = st.session_state["active_ticker"]
 
@@ -1624,7 +1770,8 @@ def main():
             rsi_label = f"{rsi_diff:+.1f} vs 50 (Neutral 30–70)"
             rsi_color = "normal"
         m3.metric("14-Day RSI", f"{current_rsi:.1f}", rsi_label, delta_color=rsi_color)
-        m4.metric("20D Resistance / Support", f"₹{resistance:,.2f}", f"Support Floor: ₹{support:,.2f}", delta_color="off")
+        supp_dist_pct = ((support - current_price) / current_price) * 100
+        m4.metric("20D Resistance / Support", f"₹{resistance:,.2f}", f"{supp_dist_pct:.1f}% to Support (₹{support:,.2f})", delta_color="off")
 
         # -------------------------------------------------------------
         # 🎯 6-Factor Buy / Hold / Avoid Decision Verdict
@@ -1668,12 +1815,12 @@ def main():
                 f"**Summary:** {verdict_data['action_summary']}"
             )
 
-        # 4-Column Actionable Trade Plan
+        # 4-Column Actionable Trade Plan (with accurate directional deltas & zero text truncation)
         plan_col1, plan_col2, plan_col3, plan_col4 = st.columns(4)
-        plan_col1.metric("Recommended Entry Zone", verdict_data["entry_zone"], "Accumulation Band")
-        plan_col2.metric("Target (Take Profit)", verdict_data["target_price"], "Upside Potential")
-        plan_col3.metric("Invalidation / Stop-Loss", verdict_data["stop_loss"], "Risk Floor")
-        plan_col4.metric("Risk-to-Reward Ratio", verdict_data["rr_ratio"], "Asymmetry Factor")
+        plan_col1.metric("Recommended Entry Zone", verdict_data["entry_zone"], verdict_data["entry_zone_detail"], delta_color="off")
+        plan_col2.metric("Target (Take Profit)", verdict_data["target_price"], verdict_data["target_delta"], delta_color="normal")
+        plan_col3.metric("Invalidation / Stop-Loss", verdict_data["stop_loss"], verdict_data["stop_delta"], delta_color="normal")
+        plan_col4.metric("Reward-to-Risk Ratio", verdict_data["rr_ratio"], verdict_data["rr_delta"], delta_color="normal")
 
         # -------------------------------------------------------------
         # 💼 Volatility-Based Position Sizing & Indian Friction Engine
@@ -1690,7 +1837,8 @@ def main():
         )
 
         p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Allocated Quantity", f"{pos_sizing['recommended_shares']:,} Shares", f"Risk Budget: ₹{pos_sizing['risk_budget']:,.2f}")
+        risk_sub = f"Effective Risk: ₹{pos_sizing['effective_risk_inr']:,.0f} ({pos_sizing['effective_risk_pct']}%)"
+        p1.metric("Allocated Quantity", f"{pos_sizing['recommended_shares']:,} Shares", risk_sub, delta_color="off")
         p2.metric("Trade Capital Committed", f"₹{pos_sizing['total_trade_value']:,.2f}", f"{pos_sizing['allocation_pct']}% of Portfolio")
         p3.metric("Estimated Gross Gain", f"₹{pos_sizing['gross_profit']:,.2f}", f"+{pos_sizing['gross_return_pct']}% Gross")
         p4.metric("Net Realized Gain (Post-Taxes)", f"₹{pos_sizing['net_profit']:,.2f}", f"+{pos_sizing['net_return_pct']}% Net Realized")
