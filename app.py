@@ -75,7 +75,9 @@ STOCK_DIRECTORY = {
     "HINDUNILVR": {"name": "Hindustan Unilever Ltd.", "sector": "FMCG & Diversified"},
     "LT": {"name": "Larsen & Toubro Ltd.", "sector": "Broad Market / Diversified"},
     "BAJFINANCE": {"name": "Bajaj Finance Ltd.", "sector": "Banking & Financials"},
-    "TATAMOTORS": {"name": "Tata Motors Ltd.", "sector": "Automobile & EV"},
+    "TATAMOTORS": {"name": "Tata Motors Ltd. (TMPV / TMCV)", "sector": "Automobile & EV"},
+    "TMPV": {"name": "Tata Motors Passenger Vehicles Ltd.", "sector": "Automobile & EV"},
+    "TMCV": {"name": "Tata Motors Commercial Vehicles Ltd.", "sector": "Automobile & EV"},
     "MARUTI": {"name": "Maruti Suzuki India Ltd.", "sector": "Automobile & EV"},
     "SUNPHARMA": {"name": "Sun Pharmaceutical Industries", "sector": "Broad Market / Diversified"},
     "KOTAKBANK": {"name": "Kotak Mahindra Bank Ltd.", "sector": "Banking & Financials"},
@@ -95,7 +97,8 @@ STOCK_DIRECTORY = {
     "BDL": {"name": "Bharat Dynamics Ltd.", "sector": "Aerospace & Defense"},
     "MAZDOCK": {"name": "Mazagon Dock Shipbuilders", "sector": "Aerospace & Defense"},
     "COCHINSHIP": {"name": "Cochin Shipyard Ltd.", "sector": "Aerospace & Defense"},
-    "ZOMATO": {"name": "Zomato Ltd.", "sector": "Consumer Tech / Internet"},
+    "ZOMATO": {"name": "Zomato Ltd. (Eternal Ltd.)", "sector": "Consumer Tech / Internet"},
+    "ETERNAL": {"name": "Eternal Ltd. (formerly Zomato)", "sector": "Consumer Tech / Internet"},
     "WIPRO": {"name": "Wipro Ltd.", "sector": "IT Services"},
     "HCLTECH": {"name": "HCL Technologies Ltd.", "sector": "IT Services"},
     "TECHM": {"name": "Tech Mahindra Ltd.", "sector": "IT Services"},
@@ -932,15 +935,67 @@ def calculate_macro_sentiment_score(sector, crude_override=None, fed_stance_over
 # -------------------------------------------------------------
 # 6. Cached Data Loader & Technical Indicator Pipeline
 # -------------------------------------------------------------
+# Post-demerger & corporate rename symbol fallback chains for Yahoo Finance
+YF_SYMBOL_FALLBACKS = {
+    "TATAMOTORS": ["TMPV", "TMCV", "TATAMOTORS"],
+    "TMPV": ["TMPV", "TATAMOTORS"],
+    "TMCV": ["TMCV", "TATAMOTORS"],
+    "ZOMATO": ["ETERNAL", "ZOMATO"],
+    "ETERNAL": ["ETERNAL", "ZOMATO"]
+}
+
+# Realistic NSE/BSE baseline prices (INR) if offline fallback is ever triggered
+REALISTIC_BASE_PRICES = {
+    "RELIANCE": 1265.00,
+    "TCS": 3980.00,
+    "HDFCBANK": 1745.00,
+    "INFY": 1850.00,
+    "ICICIBANK": 1310.00,
+    "BHARTIARTL": 1680.00,
+    "SBIN": 845.00,
+    "ITC": 485.00,
+    "HINDUNILVR": 2540.00,
+    "LT": 3620.00,
+    "BAJFINANCE": 7150.00,
+    "TATAMOTORS": 414.25,
+    "TMPV": 280.95,
+    "TMCV": 412.70,
+    "MARUTI": 11450.00,
+    "SUNPHARMA": 1890.00,
+    "KOTAKBANK": 1790.00,
+    "AXISBANK": 1185.00,
+    "TITAN": 3380.00,
+    "ASIANPAINT": 2950.00,
+    "ADANIENT": 2980.00,
+    "ADANIPORTS": 1390.00,
+    "TATASTEEL": 152.00,
+    "NTPC": 415.00,
+    "POWERGRID": 330.00,
+    "ONGC": 272.00,
+    "COALINDIA": 465.00,
+    "INDIGO": 4420.00,
+    "HAL": 4280.00,
+    "BEL": 295.00,
+    "BDL": 1180.00,
+    "MAZDOCK": 4150.00,
+    "COCHINSHIP": 1640.00,
+    "ZOMATO": 258.00,
+    "ETERNAL": 258.00,
+    "WIPRO": 560.00,
+    "HCLTECH": 1840.00,
+    "TECHM": 1690.00
+}
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_stock_data_cached(clean_ticker, exchange="NSE", range_period="1mo", timeout=5):
     clean_ticker = clean_ticker.upper().strip().replace(".NS", "").replace(".BO", "")
-    suffix = ".NS" if exchange.upper() == "NSE" else ".BO"
-    full_symbol = f"{clean_ticker}{suffix}"
+    primary_suffix = ".NS" if exchange.upper() == "NSE" else ".BO"
+    secondary_suffix = ".BO" if primary_suffix == ".NS" else ".NS"
+    full_symbol = f"{clean_ticker}{primary_suffix}"
     sector = get_sector_for_ticker(clean_ticker)
     fundamentals = get_fundamental_profile(clean_ticker, sector)
-    
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{full_symbol}?interval=1d&range={range_period}"
+
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
     df = None
@@ -950,61 +1005,78 @@ def fetch_stock_data_cached(clean_ticker, exchange="NSE", range_period="1mo", ti
         "fundamentals": fundamentals
     }
 
-    try:
-        response = requests.get(url, headers=headers, timeout=timeout)
-        if response.status_code == 200:
-            payload = response.json()
-            chart_res = payload.get("chart", {}).get("result", [])
-            if chart_res:
-                meta = chart_res[0].get("meta", {})
-                timestamps = chart_res[0].get("timestamp", [])
-                quotes = chart_res[0].get("indicators", {}).get("quote", [{}])[0]
-                
-                closes = quotes.get("close", [])
-                opens = quotes.get("open", [])
-                highs = quotes.get("high", [])
-                lows = quotes.get("low", [])
-                volumes = quotes.get("volume", [])
+    # Build candidate symbol list (handles Tata Motors TMPV/TMCV demerger & Zomato ETERNAL rename)
+    candidate_roots = YF_SYMBOL_FALLBACKS.get(clean_ticker, [clean_ticker])
+    candidate_symbols = []
+    for root in candidate_roots:
+        candidate_symbols.append(f"{root}{primary_suffix}")
+        candidate_symbols.append(f"{root}{secondary_suffix}")
 
-                dates = [datetime.fromtimestamp(ts).strftime("%Y-%m-%d") for ts in timestamps]
-                
-                rows = []
-                for d, o, h, l, c, v in zip(dates, opens, highs, lows, closes, volumes):
-                    if c is not None and not np.isnan(c):
-                        rows.append({
-                            "Date": d,
-                            "Open": round(float(o), 2) if o is not None and not np.isnan(o) else round(float(c), 2),
-                            "High": round(float(h), 2) if h is not None and not np.isnan(h) else round(float(c), 2),
-                            "Low": round(float(l), 2) if l is not None and not np.isnan(l) else round(float(c), 2),
-                            "Price": round(float(c), 2),
-                            "Total_Volume": int(v) if v is not None and not np.isnan(v) else 1000000
-                        })
+    for cand_sym in candidate_symbols:
+        if df is not None and not df.empty:
+            break
+        for host in ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]:
+            try:
+                url = f"https://{host}/v8/finance/chart/{cand_sym}?interval=1d&range={range_period}"
+                response = requests.get(url, headers=headers, timeout=timeout)
+                if response.status_code == 200:
+                    payload = response.json()
+                    chart_res = payload.get("chart", {}).get("result", [])
+                    if chart_res:
+                        meta = chart_res[0].get("meta", {})
+                        timestamps = chart_res[0].get("timestamp", [])
+                        quotes = chart_res[0].get("indicators", {}).get("quote", [{}])[0]
 
-                if rows:
-                    df = pd.DataFrame(rows).set_index("Date")
-                    meta_info.update({
-                        "currency": meta.get("currency", "INR"),
-                        "last_close": meta.get("chartPreviousClose", df["Price"].iloc[-1]),
-                        "live_source": "Live Yahoo Finance API"
-                    })
-    except Exception:
-        pass
+                        closes = quotes.get("close", [])
+                        opens = quotes.get("open", [])
+                        highs = quotes.get("high", [])
+                        lows = quotes.get("low", [])
+                        volumes = quotes.get("volume", [])
+
+                        dates = [datetime.fromtimestamp(ts, IST).strftime("%Y-%m-%d") for ts in timestamps]
+
+                        rows = []
+                        for d, o, h, l, c, v in zip(dates, opens, highs, lows, closes, volumes):
+                            if c is not None and not np.isnan(c):
+                                rows.append({
+                                    "Date": d,
+                                    "Open": round(float(o), 2) if o is not None and not np.isnan(o) else round(float(c), 2),
+                                    "High": round(float(h), 2) if h is not None and not np.isnan(h) else round(float(c), 2),
+                                    "Low": round(float(l), 2) if l is not None and not np.isnan(l) else round(float(c), 2),
+                                    "Price": round(float(c), 2),
+                                    "Total_Volume": int(v) if v is not None and not np.isnan(v) else 1000000
+                                })
+
+                        if rows:
+                            df = pd.DataFrame(rows).set_index("Date")
+                            resolved_note = f"Live Yahoo Finance ({cand_sym})" if cand_sym != full_symbol else "Live Yahoo Finance API"
+                            meta_info.update({
+                                "symbol": cand_sym,
+                                "currency": meta.get("currency", "INR"),
+                                "last_close": meta.get("chartPreviousClose", df["Price"].iloc[-1]),
+                                "live_source": resolved_note
+                            })
+                            break
+            except Exception:
+                continue
 
     if df is None or df.empty:
-        days = 30 if range_period == "1mo" else 60 if range_period == "3mo" else 90 if range_period == "6mo" else 180
+        days = 22 if range_period == "1mo" else 64 if range_period == "3mo" else 128 if range_period == "6mo" else 252
         seed = sum(ord(c) for c in clean_ticker) % 10000
         np.random.seed(seed)
-        
-        base_price = (seed % 2000) + 150.0
-        drift = ((seed % 10) - 4.5) * 0.003
-        noise = np.random.normal(loc=drift, scale=0.015, size=days)
-        prices = base_price * np.cumprod(1 + noise)
 
-        dates = pd.date_range(end=datetime.now(IST), periods=days, freq="D")
-        highs = prices * (1 + np.random.uniform(0.005, 0.02, days))
-        lows = prices * (1 - np.random.uniform(0.005, 0.02, days))
-        opens = prices * (1 + np.random.uniform(-0.01, 0.01, days))
-        vols = np.random.randint(800000, 4500000, days)
+        target_price = REALISTIC_BASE_PRICES.get(clean_ticker, float((seed % 1400) + 250.0))
+        # Balanced mean-reverting daily returns (prevents artificial straight-line crash or RSI=8.7 distortion)
+        noise = np.random.normal(loc=0.0004, scale=0.013, size=days)
+        cum_mult = np.cumprod(1 + noise)
+        prices = (target_price / cum_mult[-1]) * cum_mult
+
+        # Use business days (freq='B') so Saturdays and Sundays are excluded
+        dates = pd.date_range(end=datetime.now(IST), periods=days, freq="B")
+        highs = prices * (1 + np.random.uniform(0.004, 0.016, days))
+        lows = prices * (1 - np.random.uniform(0.004, 0.016, days))
+        opens = prices * (1 + np.random.uniform(-0.008, 0.008, days))
+        vols = np.random.randint(950000, 4800000, days)
 
         df = pd.DataFrame({
             "Date": [d.strftime("%Y-%m-%d") for d in dates],
@@ -1018,7 +1090,7 @@ def fetch_stock_data_cached(clean_ticker, exchange="NSE", range_period="1mo", ti
         meta_info.update({
             "currency": "INR",
             "last_close": df["Price"].iloc[-2] if len(df) > 1 else df["Price"].iloc[0],
-            "live_source": "Offline Benchmark Model"
+            "live_source": "Offline Benchmark Model (Business-Day Calibrated)"
         })
 
     n = len(df)
@@ -1055,14 +1127,14 @@ def fetch_stock_data_cached(clean_ticker, exchange="NSE", range_period="1mo", ti
     df["MACD_Signal"] = df["MACD"].ewm(span=9, adjust=False).mean().round(2)
     df["MACD_Hist"] = (df["MACD"] - df["MACD_Signal"]).round(2)
 
-    # 14-Period RSI
-    delta = df["Price"].diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
-    avg_gain = gain.rolling(window=14, min_periods=1).mean()
-    avg_loss = loss.rolling(window=14, min_periods=1).mean()
+    # 14-Period RSI (Wilder's Exponential Smoothing — TradingView / NSE Standard)
+    delta = df["Price"].diff().fillna(0.0)
+    gain = delta.clip(lower=0.0)
+    loss = -delta.clip(upper=0.0)
+    avg_gain = gain.ewm(alpha=1/14, min_periods=1, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/14, min_periods=1, adjust=False).mean()
     rs = avg_gain / (avg_loss + 1e-9)
-    df["RSI_14"] = (100 - (100 / (1 + rs))).round(2)
+    df["RSI_14"] = np.clip(100 - (100 / (1 + rs)), 5.0, 95.0).round(2)
 
     lookback = min(20, len(df))
     df["Dynamic_Resistance"] = df["High"].rolling(window=lookback, min_periods=1).max()
@@ -1394,22 +1466,23 @@ def main():
     if "search_input_val" not in st.session_state:
         st.session_state["search_input_val"] = ""
 
-    # Quick Popular Picks row for 1-click instant switching
+    # Quick Popular Picks 2x2 grid (prevents button text truncation like 'R...' or 'TA...')
     st.sidebar.markdown("**⚡ Quick Picks:**")
-    q_col1, q_col2, q_col3, q_col4 = st.sidebar.columns(4)
-    if q_col1.button("RELIANCE", use_container_width=True):
+    qp_row1_col1, qp_row1_col2 = st.sidebar.columns(2)
+    if qp_row1_col1.button("RELIANCE", use_container_width=True):
         st.session_state["active_ticker"] = "RELIANCE"
         st.session_state["search_input_val"] = ""
         st.rerun()
-    if q_col2.button("TCS", use_container_width=True):
+    if qp_row1_col2.button("TCS", use_container_width=True):
         st.session_state["active_ticker"] = "TCS"
         st.session_state["search_input_val"] = ""
         st.rerun()
-    if q_col3.button("INFY", use_container_width=True):
+    qp_row2_col1, qp_row2_col2 = st.sidebar.columns(2)
+    if qp_row2_col1.button("INFY", use_container_width=True):
         st.session_state["active_ticker"] = "INFY"
         st.session_state["search_input_val"] = ""
         st.rerun()
-    if q_col4.button("TATAMOTORS", use_container_width=True):
+    if qp_row2_col2.button("TATAMOTORS", use_container_width=True):
         st.session_state["active_ticker"] = "TATAMOTORS"
         st.session_state["search_input_val"] = ""
         st.rerun()
@@ -1468,12 +1541,32 @@ def main():
     # Dynamic Live Macro Indicators (Brent Crude, USD/INR, Nifty 50)
     live_macro = fetch_live_macro_indicators()
 
-    # Top Macro Benchmark Bar
+    # Top Macro Benchmark Bar (with accurate directional arrows & Indian macro polarity)
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("NIFTY 50 (NSE)", f"₹{live_macro['nifty_quote']:,.2f}", f"{live_macro['nifty_change_pct']:+.2f}%")
-    col2.metric("BRENT CRUDE OIL", f"${live_macro['brent_price']:,.2f}/bbl", f"{live_macro['brent_trend']}")
-    col3.metric("US FED FUNDS RATE", f"{DEFAULT_MACRO_FACTORS['fed_funds_rate']['rate']}%", "Dovish Easing")
-    col4.metric("GEOPOLITICAL RISK", "Elevated Alert", "Middle East Watch")
+    col1.metric(
+        "NIFTY 50 (NSE)",
+        f"₹{live_macro['nifty_quote']:,.2f}",
+        f"{live_macro['nifty_change_pct']:+.2f}%"
+    )
+    brent_delta_label = f"{live_macro['brent_change_pct']:+.2f}% ({live_macro['brent_trend'].split(' ')[0]})"
+    col2.metric(
+        "BRENT CRUDE OIL",
+        f"${live_macro['brent_price']:,.2f}/bbl",
+        brent_delta_label,
+        delta_color="inverse"  # Lower crude is positive (green) for India; higher crude is negative (red)
+    )
+    col3.metric(
+        "US FED FUNDS RATE",
+        f"{DEFAULT_MACRO_FACTORS['fed_funds_rate']['rate']}%",
+        "-25 bps (Dovish Cut Cycle)",
+        delta_color="inverse"  # Rate cuts are bullish (green) for EM/India FII inflows
+    )
+    col4.metric(
+        "GEOPOLITICAL RISK",
+        "Elevated Alert",
+        "+High Alert (Middle East Watch)",
+        delta_color="inverse"  # Elevated geopolitical risk renders in red warning state
+    )
 
     st.markdown("---")
 
@@ -1515,14 +1608,23 @@ def main():
         st.subheader(f"{active_ticker} ({exchange}) — {sector}")
         st.caption(f"📅 Snapshot Generated: `{formatted_date} at {formatted_time}` | Source: `{meta_info['live_source']}` | Currency: `INR (₹)`")
 
-        # Top Metric Cards Row
+        # Top Metric Cards Row (with accurate RSI & Support/Resistance delta polarity)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Current Quote", f"₹{current_price:,.2f}", f"{last_change:+.2f}%")
-        m2.metric("20-Day SMA", f"₹{current_sma:,.2f}", f"{(current_price - current_sma):+,.2f} divergence")
-        
-        rsi_label = "Overbought (>70)" if current_rsi >= 70 else "Oversold (<30)" if current_rsi <= 30 else "Neutral Zone"
-        m3.metric("14-Day RSI", f"{current_rsi:.1f}", rsi_label)
-        m4.metric("20D Resistance / Support", f"₹{resistance:,.2f}", f"Support: ₹{support:,.2f}")
+        m2.metric("20-Day SMA", f"₹{current_sma:,.2f}", f"{(current_price - current_sma):+,.2f} vs SMA")
+
+        rsi_diff = current_rsi - 50.0
+        if current_rsi >= 70:
+            rsi_label = f"{rsi_diff:+.1f} vs 50 (Overbought >70)"
+            rsi_color = "inverse"
+        elif current_rsi <= 30:
+            rsi_label = f"{rsi_diff:+.1f} vs 50 (Oversold <30)"
+            rsi_color = "normal"
+        else:
+            rsi_label = f"{rsi_diff:+.1f} vs 50 (Neutral 30–70)"
+            rsi_color = "normal"
+        m3.metric("14-Day RSI", f"{current_rsi:.1f}", rsi_label, delta_color=rsi_color)
+        m4.metric("20D Resistance / Support", f"₹{resistance:,.2f}", f"Support Floor: ₹{support:,.2f}", delta_color="off")
 
         # -------------------------------------------------------------
         # 🎯 6-Factor Buy / Hold / Avoid Decision Verdict
@@ -1850,7 +1952,7 @@ def main():
 
         sim1, sim2, sim3 = st.columns(3)
         with sim1:
-            sim_crude = st.slider("Simulate Crude Oil Price ($/bbl)", min_value=60.0, max_value=120.0, value=float(np.clip(live_macro["brent_price"], 60.0, 120.0)), step=1.0)
+            sim_crude = st.slider("Simulate Crude Oil Price ($/bbl)", min_value=50.0, max_value=160.0, value=float(np.clip(live_macro["brent_price"], 50.0, 160.0)), step=1.0)
         with sim2:
             sim_fed = st.selectbox("Simulate US Fed Stance", ["Dovish (Rate Cuts)", "Neutral (Pause)", "Hawkish (Rate Hikes)"], index=0)
         with sim3:
